@@ -1,5 +1,5 @@
 ![Status](https://img.shields.io/badge/status-WIP-orange)
-# Mein Script Tool
+# Exchange Install Automation Tool
 
 ⚠️ **Work in Progress (WIP)**  
 Dieses Repository ist noch in Entwicklung und nicht produktiv einsetzbar.
