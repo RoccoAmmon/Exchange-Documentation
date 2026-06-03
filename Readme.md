@@ -1,5 +1,5 @@
 ![Status](https://img.shields.io/badge/status-WIP-orange)
-# Exchange Install Automation Tool
+# Microsoft Exchange 2019/SE Documentation Tool
 
 ⚠️ **Work in Progress (WIP)**  
 Dieses Repository ist noch in Entwicklung und nicht produktiv einsetzbar.
