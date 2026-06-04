@@ -1,0 +1,11 @@
+
+# Copilot / Agent Kontext
+PROGRESS.md
+.NOTES.local.md
+
+# Logs
+*.log
+
+# Temp
+*.tmp
+*.ba
