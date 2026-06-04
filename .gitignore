@@ -9,3 +9,8 @@ PROGRESS.md
 # Temp
 *.tmp
 *.ba
+
+
+# VS Code (optional)
+.vscode/
+``

@@ -3,7 +3,7 @@
 > **Automatische Erfassung und Dokumentation von Microsoft Exchange On-Premises Umgebungen (Exchange 2019 & Subscription Edition)**
 
 [![Status](https://img.shields.io/badge/Status-Release-brightgreen?style=flat-square)](./CHANGELOG.md)
-[![Version](https://img.shields.io/badge/Version-1.0-blue?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-1.1-blue?style=flat-square)](./CHANGELOG.md)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-blue?style=flat-square)](https://www.microsoft.com/en-us/download/details.aspx?id=50395)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
 [![GitHub Issues](https://img.shields.io/github/issues/RoccoAmmon/Exchange-Documentation?style=flat-square)](https://github.com/RoccoAmmon/Exchange-Documentation/issues)
@@ -52,6 +52,7 @@ Das Tool unterstützt sowohl **Exchange Server 2019** als auch **Exchange Server
 
 ### 🛡️ Erweiterte Funktionen
 - **Exchange Emergency Mitigation Service (EEMS)** - Status und Telemetrie
+- **Transportkomponenten - Physische Speicherorte** - Queue-DB, Logs, Message-Tracking, SMTP-Protokolle, Safety-Net
 - Active Directory Integration (FSMO-Rollen, Schema-Version)
 - Remote Registry Access (ohne WinRM-Abhängigkeit)
 - Automatischer CIM → DCOM Fallback
@@ -166,6 +167,7 @@ Das generierte Dokument enthält automatisch:
 ✅ DAG-Konfiguration  
 ✅ Datenbanken & Backups  
 ✅ Transport-Regeln  
+✅ **Transportkomponenten - Speicherorte** (Queue, Logs, Message-Tracking, SMTP-Protokoll, Safety-Net)  
 ✅ Accepted Domains & Remote Domains  
 ✅ FSMO-Rollen & AD-Info  
 ✅ RBAC-Konfiguration  
