@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Exchange On-Premises Dokumentations-Skript (v1.0 - Exchange 2019 & SE Support)
+    Exchange On-Premises Dokumentations-Skript (v1.1 - Exchange 2019 & SE Support)
 .DESCRIPTION
     Erstellt eine umfassende HTML-Dokumentation der gesamten Exchange On-Premises Umgebung.
     Unterstützt Exchange Server 2019 und Exchange Server Subscription Edition (SE).
@@ -10,6 +10,9 @@
     sodass das Skript auch funktioniert, wenn WinRM (PowerShell Remoting) nicht
     korrekt konfiguriert ist.
 
+    NEU in v1.1:
+    - Transportkomponenten - Physische Speicherorte (Queue-DB, Logs, Message-Tracking, SMTP-Protokoll, Safety-Net)
+    
     NEU in v1.0:
     - Vollständige Exchange Server SE Unterstützung (Modul-basiert)
     - Automatische Erkennung Exchange 2019 vs. Exchange SE (Build-Nummer + Registry-Check)
@@ -48,6 +51,7 @@
     - Mobile Device Policies
     - Zertifikate inkl. Bindungen und Ablauf-Ampel
     - Transport-Regeln
+    - Transportkomponenten - Physische Speicherorte (Queue-DB, Logs, Message-Tracking, SMTP-Protokoll, Safety-Net)
     - Mailbox-Statistiken und Empfänger-Übersicht
     - Throttling Policies
     - Retention Policies und Journal Rules
@@ -79,10 +83,11 @@
 
 .NOTES
     Autor:           Rocco Ammon
-    Version:         1.0
+    Version:         1.1
     Erstellt:        2026-03-05
-    Letzte Änderung: 2026-06-03
-    Änderungen:      v1.0 - Erstveröffentlichung mit Exchange SE Unterstützung, EEMS Monitoring und erweiterten Sicherheits-/Compliance-Dokumentationen
+    Letzte Änderung: 2026-06-04
+    Änderungen:      v1.1 - Erweiterte Transportkomponenten-Dokumentation (Speicherorte, Queue-DB, Message-Tracking, SMTP-Logs, Safety-Net)
+                     v1.0 - Erstveröffentlichung mit Exchange SE Unterstützung, EEMS Monitoring und erweiterten Sicherheits-/Compliance-Dokumentationen
                      v0.1 - Vorversionen / interne Tests (historisch)
     Voraussetzungen: - Exchange 2019 Management Shell/Snap-In ODER Exchange SE PowerShell-Modul
                      - Active Directory PowerShell-Modul
@@ -1973,7 +1978,180 @@ function Get-TransportRuleInfo {
 }
 
 # ---------------------------------------------------------------
-# 21. MAILBOX-STATISTIKEN
+# 21. TRANSPORTKOMPONENTEN - PHYSISCHE SPEICHERORTE
+# ---------------------------------------------------------------
+function Get-TransportComponentStorageInfo {
+    <#
+    .SYNOPSIS
+        Dokumentiert die physischen Speicherorte der Transportkomponenten.
+        Umfasst: Queue-Datenbank, Queue-Logs, Message-Tracking-Logs, SMTP-Protokolllogs, Safety-Net.
+    #>
+    Write-Log -Message "=== Sammle Transportkomponenten-Speicherorte ===" -Level "INFO"
+
+    $tcHTML = ""
+
+    try {
+        # Transport-Konfiguration abrufen
+        $transportConfig = Get-TransportConfig -ErrorAction Stop
+        $transportServers = Get-TransportServer -ErrorAction Stop
+
+        # === Queue-Datenbank und Queue-Logs ===
+        $queueStorage = @()
+        foreach ($server in $transportServers) {
+            try {
+                $queueStorage += [PSCustomObject]@{
+                    Server = $server.Identity
+                    'Queue-Datenbank Pfad' = $server.QueueLogPath
+                    'Queue-Logs Pfad' = $server.QueueLogPath
+                    'Queue-Datenbank Größe' = $server.QueueDatabasePath
+                }
+            }
+            catch {
+                Write-Log -Message "Fehler beim Abrufen der Queue-Pfade für $($server.Identity): $_" -Level "WARNING"
+            }
+        }
+
+        if ($queueStorage.Count -gt 0) {
+            $tcHTML += "<h3>Queue-Datenbank und Queue-Logs</h3>"
+            $tcHTML += (ConvertTo-HTMLTable -Data $queueStorage -NoDataMessage "Keine Queue-Informationen verfügbar.")
+        }
+
+        # === Message-Tracking-Logs ===
+        $messageTrackingStorage = @()
+        foreach ($server in $transportServers) {
+            try {
+                $messageTrackingStorage += [PSCustomObject]@{
+                    Server = $server.Identity
+                    'Message-Tracking-Log Pfad' = $server.MessageTrackingLogPath
+                    'Maximale Größe (GB)' = $server.MessageTrackingLogMaxAge
+                    'Aufbewahrungsdauer (Tage)' = $server.MessageTrackingLogMaxDirectorySize
+                }
+            }
+            catch {
+                Write-Log -Message "Fehler beim Abrufen der Message-Tracking-Pfade für $($server.Identity): $_" -Level "WARNING"
+            }
+        }
+
+        if ($messageTrackingStorage.Count -gt 0) {
+            $tcHTML += "<h3>Message-Tracking-Logs</h3>"
+            $tcHTML += (ConvertTo-HTMLTable -Data $messageTrackingStorage -NoDataMessage "Keine Message-Tracking-Informationen verfügbar.")
+        }
+
+        # === SMTP-Protokolllogs für Empfangsconnectoren ===
+        $receiveConnectors = Get-ReceiveConnector -ErrorAction SilentlyContinue
+        $smtpReceiveLogs = @()
+        if ($receiveConnectors) {
+            foreach ($connector in $receiveConnectors) {
+                try {
+                    $smtpReceiveLogs += [PSCustomObject]@{
+                        Connector = $connector.Identity
+                        Typ = "Empfänger"
+                        'SMTP-Log Pfad' = if ($connector.ProtocolLoggingLevel -eq "Verbose") { "Aktiviert - Pfad systemabhängig" } else { "Nicht aktiviert / $($connector.ProtocolLoggingLevel)" }
+                        'Log-Level' = $connector.ProtocolLoggingLevel
+                    }
+                }
+                catch {
+                    Write-Log -Message "Fehler beim Abrufen des SMTP-Logs für $($connector.Identity): $_" -Level "WARNING"
+                }
+            }
+        }
+
+        # === SMTP-Protokolllogs für Sendeconnectoren ===
+        $sendConnectors = Get-SendConnector -ErrorAction SilentlyContinue
+        if ($sendConnectors) {
+            foreach ($connector in $sendConnectors) {
+                try {
+                    $smtpReceiveLogs += [PSCustomObject]@{
+                        Connector = $connector.Identity
+                        Typ = "Sender"
+                        'SMTP-Log Pfad' = if ($connector.ProtocolLoggingLevel -eq "Verbose") { "Aktiviert - Pfad systemabhängig" } else { "Nicht aktiviert / $($connector.ProtocolLoggingLevel)" }
+                        'Log-Level' = $connector.ProtocolLoggingLevel
+                    }
+                }
+                catch {
+                    Write-Log -Message "Fehler beim Abrufen des SMTP-Logs für $($connector.Identity): $_" -Level "WARNING"
+                }
+            }
+        }
+
+        if ($smtpReceiveLogs.Count -gt 0) {
+            $tcHTML += "<h3>SMTP-Protokolllogs (Sende- und Empfangsconnectoren)</h3>"
+            $tcHTML += (ConvertTo-HTMLTable -Data $smtpReceiveLogs -NoDataMessage "Keine SMTP-Log-Informationen verfügbar.")
+        }
+
+        # === Safety-Net Konfiguration ===
+        $safetyNetInfo = @()
+        try {
+            $safetyNetInfo += [PSCustomObject]@{
+                Parameter = "Safety-Net Aktiviert"
+                Wert = $transportConfig.SafetyNetEnabled
+            }
+            $safetyNetInfo += [PSCustomObject]@{
+                Parameter = "Safety-Net Hold Time (Stunden)"
+                Wert = if ($transportConfig.SafetyNetHoldTime) { $transportConfig.SafetyNetHoldTime.TotalHours } else { "Standard" }
+            }
+            $safetyNetInfo += [PSCustomObject]@{
+                Parameter = "Safety-Net Quota (GB)"
+                Wert = if ($transportConfig.SafetyNetQuotaInGigabytes) { $transportConfig.SafetyNetQuotaInGigabytes } else { "Standard" }
+            }
+            $safetyNetInfo += [PSCustomObject]@{
+                Parameter = "Maximum Recipients For Safety Net"
+                Wert = $transportConfig.MaximumRecipientsForSafetyNet
+            }
+
+            $tcHTML += "<h3>Safety-Net Konfiguration</h3>"
+            $tcHTML += (ConvertTo-HTMLTable -Data $safetyNetInfo -NoDataMessage "Keine Safety-Net-Informationen verfügbar.")
+        }
+        catch {
+            Write-Log -Message "Fehler beim Abrufen der Safety-Net-Konfiguration: $_" -Level "WARNING"
+        }
+
+        # === Zusammenfassung der Standard-Speicherorte ===
+        $tcHTML += "<h3>Standard-Speicherorte für Transportkomponenten</h3>"
+        $standardPaths = @()
+        $standardPaths += [PSCustomObject]@{
+            Komponente = "Queue-Datenbank"
+            'Standardpfad' = "%ExchangeInstallPath%Bin\Queue"
+            Beschreibung = "Enthält die Transportdatenbank mit ausstehenden Nachrichten"
+        }
+        $standardPaths += [PSCustomObject]@{
+            Komponente = "Queue-Logs"
+            'Standardpfad' = "%ExchangeInstallPath%Bin\Queue"
+            Beschreibung = "Transaktionslogs für die Queue-Datenbank"
+        }
+        $standardPaths += [PSCustomObject]@{
+            Komponente = "Message-Tracking-Logs"
+            'Standardpfad' = "%ExchangeInstallPath%Logging\MessageTracking"
+            Beschreibung = "Protokolliert alle Transportereignisse für Audit und Compliance"
+        }
+        $standardPaths += [PSCustomObject]@{
+            Komponente = "SMTP-Empfangs-Protokolllogs"
+            'Standardpfad' = "%ExchangeInstallPath%Logging\Protocols\SmtpReceive"
+            Beschreibung = "SMTP-Protokolllogs für eingehende Verbindungen"
+        }
+        $standardPaths += [PSCustomObject]@{
+            Komponente = "SMTP-Send-Protokolllogs"
+            'Standardpfad' = "%ExchangeInstallPath%Logging\Protocols\SmtpSend"
+            Beschreibung = "SMTP-Protokolllogs für ausgehende Verbindungen"
+        }
+        $standardPaths += [PSCustomObject]@{
+            Komponente = "Safety-Net Daten"
+            'Standardpfad' = "%ExchangeInstallPath%TransportRoles\Data\Queue"
+            Beschreibung = "Shadow-Redundanz Daten für Nachrichtenwiederherstellung"
+        }
+
+        $tcHTML += (ConvertTo-HTMLTable -Data $standardPaths -NoDataMessage "Keine Standard-Pfade verfügbar.")
+    }
+    catch {
+        Write-Log -Message "Fehler bei Transportkomponenten-Speicherorten: $_" -Level "ERROR"
+        $tcHTML += "<p class='error'>Fehler: $_</p>"
+    }
+
+    New-HTMLSection -Title "Transportkomponenten - Physische Speicherorte" -Content $tcHTML
+}
+
+# ---------------------------------------------------------------
+# 22. MAILBOX-STATISTIKEN
 # ---------------------------------------------------------------
 function Get-MailboxStatisticsOverview {
     <#
@@ -2031,7 +2209,7 @@ function Get-MailboxStatisticsOverview {
 }
 
 # ---------------------------------------------------------------
-# 22. THROTTLING POLICIES
+# 23. THROTTLING POLICIES
 # ---------------------------------------------------------------
 function Get-ThrottlingPolicyInfo {
     <#
@@ -2063,7 +2241,7 @@ function Get-ThrottlingPolicyInfo {
 }
 
 # ---------------------------------------------------------------
-# 23. RETENTION / COMPLIANCE
+# 24. RETENTION / COMPLIANCE
 # ---------------------------------------------------------------
 function Get-RetentionPolicyInfo {
     <#
@@ -2109,7 +2287,7 @@ function Get-RetentionPolicyInfo {
 }
 
 # ---------------------------------------------------------------
-# 24. RBAC / ADMIN-ROLLEN
+# 25. RBAC / ADMIN-ROLLEN
 # ---------------------------------------------------------------
 function Get-RBACInfo {
     <#
@@ -2146,7 +2324,7 @@ function Get-RBACInfo {
 }
 
 # ---------------------------------------------------------------
-# 25. EVENT LOGS (CIM/DCOM)
+# 26. EVENT LOGS (CIM/DCOM)
 # ---------------------------------------------------------------
 function Get-EventLogInfo {
     <#
@@ -2217,7 +2395,7 @@ function Get-EventLogInfo {
 }
 
 # ---------------------------------------------------------------
-# 26. SICHERHEIT & AUTHENTIFIZIERUNG
+# 27. SICHERHEIT & AUTHENTIFIZIERUNG
 # ---------------------------------------------------------------
 function Get-SecurityAndAuthInfo {
     <#
@@ -2303,7 +2481,7 @@ function Get-SecurityAndAuthInfo {
 }
 
 # ---------------------------------------------------------------
-# 27. ANTI-SPAM / ANTI-MALWARE KONFIGURATION
+# 28. ANTI-SPAM / ANTI-MALWARE KONFIGURATION
 # ---------------------------------------------------------------
 function Get-AntiSpamMalwareInfo {
     <#
@@ -2404,7 +2582,7 @@ function Get-AntiSpamMalwareInfo {
 }
 
 # ---------------------------------------------------------------
-# 28. COMPLIANCE & DLP
+# 29. COMPLIANCE & DLP
 # ---------------------------------------------------------------
 function Get-ComplianceInfo {
     <#
@@ -2489,7 +2667,7 @@ function Get-ComplianceInfo {
 }
 
 # ---------------------------------------------------------------
-# 29. MAILBOX-QUOTAS
+# 30. MAILBOX-QUOTAS
 # ---------------------------------------------------------------
 function Get-MailboxQuotaInfo {
     <#
@@ -2561,7 +2739,7 @@ function Get-MailboxQuotaInfo {
 }
 
 # ---------------------------------------------------------------
-# 30. SMTP-RELAY KONFIGURATION
+# 31. SMTP-RELAY KONFIGURATION
 # ---------------------------------------------------------------
 function Get-SMTPRelayInfo {
     <#
@@ -2620,7 +2798,7 @@ function Get-SMTPRelayInfo {
 }
 
 # ---------------------------------------------------------------
-# 31. FIREWALL-REGELN
+# 32. FIREWALL-REGELN
 # ---------------------------------------------------------------
 function Get-FirewallInfo {
     <#
@@ -2732,7 +2910,7 @@ function Get-FirewallInfo {
 }
 
 # ---------------------------------------------------------------
-# 32. LIZENZIERUNG
+# 33. LIZENZIERUNG
 # ---------------------------------------------------------------
 function Get-LicensingInfo {
     <#
@@ -2832,7 +3010,7 @@ function Get-LicensingInfo {
 }
 
 # ---------------------------------------------------------------
-# 33. DKIM-KONFIGURATION
+# 34. DKIM-KONFIGURATION
 # ---------------------------------------------------------------
 function Get-DKIMInfo {
     <#
@@ -2924,7 +3102,7 @@ function Get-DKIMInfo {
 }
 
 # ---------------------------------------------------------------
-# 34. HYBRID-KONFIGURATION MIT EXCHANGE ONLINE
+# 35. HYBRID-KONFIGURATION MIT EXCHANGE ONLINE
 # ---------------------------------------------------------------
 function Get-HybridConfigurationInfo {
     <#
@@ -3431,6 +3609,7 @@ function Get-DocSectionRegistry {
         [PSCustomObject]@{ Key = "RemoteDomain";       Label = "Remote Domains";                    Category = "Mail-Flow";          Function = "Get-RemoteDomainInfo" }
         [PSCustomObject]@{ Key = "AcceptedDomain";     Label = "Accepted Domains";                  Category = "Mail-Flow";          Function = "Get-AcceptedDomainInfo" }
         [PSCustomObject]@{ Key = "TransportRule";      Label = "Transport-Regeln";                  Category = "Mail-Flow";          Function = "Get-TransportRuleInfo" }
+        [PSCustomObject]@{ Key = "TransportStorage";   Label = "Transport - Speicherorte";          Category = "Mail-Flow";          Function = "Get-TransportComponentStorageInfo" }
         [PSCustomObject]@{ Key = "SMTPRelay";          Label = "SMTP-Relay Konfiguration";          Category = "Mail-Flow";          Function = "Get-SMTPRelayInfo" }
 
         # === DNS & EXTERNE RECORDS ===
