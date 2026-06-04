@@ -43,14 +43,8 @@ cd Exchange-Documentation
 ## Changelog
 - v1.0 – Erstveröffentlichung (Initial Release)
 
-## Release & Automatisierung
-Es gibt ein Beispiel-Workflow unter `.github/workflows/release.yml` und ein Hilfs-Skript `scripts/create-release.ps1`, um ein Git-Tag zu erstellen und einen Release-Prozess zu triggern.
-
-## Wiki & Dokumentation
-Im Repository liegt eine Starterseite `WIKI.md` die als Grundlage für das GitHub-Wiki dienen kann.
-
 ## Lizenz
-Dieses Projekt ist lizenziert unter der MIT-Lizenz. Passen Sie die Lizenz bei Bedarf an.
+Dieses Projekt ist lizenziert unter der MIT-Lizenz.
 
 ## Kontakt
 Autor: Rocco Ammon
