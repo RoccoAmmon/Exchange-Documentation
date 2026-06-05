@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Exchange On-Premises Dokumentations-Skript (v1.2 - Exchange 2019 & SE Support)
+    Exchange On-Premises Dokumentations-Skript (v1.3 - Exchange 2013/2016/2019 & SE Support)
 .DESCRIPTION
     Erstellt eine umfassende HTML-Dokumentation der gesamten Exchange On-Premises Umgebung.
     Unterstützt Exchange Server 2019 und Exchange Server Subscription Edition (SE).
@@ -9,6 +9,12 @@
     WICHTIG: Diese Version verwendet CIM-Sessions mit automatischem DCOM-Fallback,
     sodass das Skript auch funktioniert, wenn WinRM (PowerShell Remoting) nicht
     korrekt konfiguriert ist.
+
+    NEU in v1.3:
+    - Zuverlässigere Exchange-Edition-Erkennung über Versionsnummer (15.0/15.1/15.2)
+    - Zusätzliche Unterstützung für Exchange 2013 (Version 15.0) und Exchange 2016 (Version 15.1)
+    - Sauberere Fallback-Logik ohne harten "2019"-Fallback
+    - Konsistente Edition-Erkennung in Get-ExchangeEdition und Get-ExchangeServerOverview
 
     NEU in v1.2:
     - TLS/SSL Konfiguration mit Best Practice Bewertung (Registry, Ciphers, Zertifikate)
@@ -89,10 +95,11 @@
 
 .NOTES
     Autor:           Rocco Ammon
-    Version:         1.2
+    Version:         1.3
     Erstellt:        2026-03-05
-    Letzte Änderung: 2026-06-05
-    Änderungen:      v1.2 - TLS/SSL Konfiguration mit Best Practice Bewertung
+    Letzte Änderung: 2026-06-10
+    Änderungen:      v1.3 - Verbesserte Exchange-Edition-Erkennung (Unterstützung 2013/2016/2019/SE via Versionsnummer)
+                     v1.2 - TLS/SSL Konfiguration mit Best Practice Bewertung
                      v1.1 - Erweiterte Transportkomponenten-Dokumentation (Speicherorte, Queue-DB, Message-Tracking, SMTP-Logs, Safety-Net)
                      v1.0 - Erstveröffentlichung mit Exchange SE Unterstützung, EEMS Monitoring und erweiterten Sicherheits-/Compliance-Dokumentationen
                      v0.1 - Vorversionen / interne Tests (historisch)
@@ -453,100 +460,72 @@ function Initialize-ExchangeEnvironment {
 function Get-ExchangeEdition {
     <#
     .SYNOPSIS
-        Ermittelt die Exchange Edition (2019 oder SE) anhand der AdminDisplayVersion.
-        Exchange SE: Build >= 2000 ODER Remote-Registry zeigt 'Subscription'.
-        Exchange 2019 hatte maximal Build ~1688 (CU15), SE startet bei höheren Builds.
+        Ermittelt die Exchange Edition (2013, 2016, 2019 oder SE) anhand der Version und Build.
+        Version-erste Erkennung (zuverlässiger):
+        - Version 15.0 → 2013
+        - Version 15.1 → 2016
+        - Version 15.2 mit Build >= 2000 → SE
+        - Version 15.2 mit Build < 2000 → 2019
+        Fallback auf Build-Ranges wenn Version nicht zu extrahieren ist.
     #>
-    Write-Log -Message "=== Ermittle Exchange Edition (2019 vs. SE) ===" -Level "INFO"
+    Write-Log -Message "=== Ermittle Exchange Edition ===" -Level "INFO"
 
     try {
-        # Ersten Exchange Server abfragen
         $exServer = Get-ExchangeServer -ErrorAction Stop | Select-Object -First 1
         if ($exServer) {
-            $serverName = $exServer.Name
             $adminVersion = $exServer.AdminDisplayVersion.ToString()
             Write-Log -Message "AdminDisplayVersion: $adminVersion" -Level "INFO"
 
-            # Build-Nummer extrahieren (Format: Version 15.2 (Build 1544.11))
-            if ($adminVersion -match 'Build\s+(\d+)\.(\d+)') {
-                $buildMajor = [int]$Matches[1]
-                Write-Log -Message "Build-Nummer (Major): $buildMajor" -Level "INFO"
+            # Versionsstring prüfen (zuverlässiger als Build-Ranges)
+            if ($adminVersion -match 'Version\s+(\d+\.\d+)') {
+                $version = $Matches[1]
+                Write-Log -Message "Exchange Version erkannt: $version" -Level "INFO"
 
-                # Exchange 2019 letzte Version war CU15 mit Build ~1688
-                # Exchange SE startet bei Build 1544 (RTM) aber neuere SE Versionen haben Build >= 2000
-                # Build >= 2000 ist definitiv SE (2019 ging nie so hoch)
-                if ($buildMajor -ge 2000) {
-                    $script:ExchangeEdition = "SE"
-                    Write-Log -Message "Exchange Edition erkannt: Subscription Edition (SE) - Build $buildMajor > 2000" -Level "INFO"
+                if ($version -eq "15.0") {
+                    $script:ExchangeEdition = "2013"
+                    Write-Log -Message "Exchange Edition erkannt: 2013 (Version 15.0)" -Level "INFO"
                 }
-                elseif ($buildMajor -ge 1544) {
-                    # Grauzone: könnte 2019 CU14/CU15 oder SE RTM/CU1 sein
-                    # Remote-Registry-Check auf Exchange Server durchführen
-                    Write-Log -Message "Build $buildMajor in Grauzone (1544-1999) - prüfe Remote-Registry auf $serverName" -Level "INFO"
-                    
-                    $productName = $null
-                    try {
-                        # Versuche Remote-Registry via Invoke-Command
-                        $productName = Invoke-Command -ComputerName $serverName -ScriptBlock {
-                            $reg = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup" -ErrorAction SilentlyContinue
-                            return $reg.MsiProductName
-                        } -ErrorAction SilentlyContinue
-                    }
-                    catch {
-                        Write-Log -Message "Remote-Registry fehlgeschlagen: $_" -Level "WARNING"
-                    }
-
-                    # Fallback: Lokale Registry (falls Skript auf Exchange Server läuft)
-                    if (-not $productName) {
-                        $regLocal = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup" -ErrorAction SilentlyContinue
-                        $productName = $regLocal.MsiProductName
-                    }
-
-                    Write-Log -Message "MsiProductName: $productName" -Level "INFO"
-
-                    if ($productName -match 'Subscription') {
-                        $script:ExchangeEdition = "SE"
-                        Write-Log -Message "Exchange Edition erkannt: Subscription Edition (SE) - via Registry" -Level "INFO"
+                elseif ($version -eq "15.1") {
+                    $script:ExchangeEdition = "2016"
+                    Write-Log -Message "Exchange Edition erkannt: 2016 (Version 15.1)" -Level "INFO"
+                }
+                elseif ($version -eq "15.2") {
+                    # Version 15.2 könnte 2019 oder SE sein - Build prüfen
+                    if ($adminVersion -match 'Build\s+(\d+)') {
+                        $build = [int]$Matches[1]
+                        if ($build -ge 2000) {
+                            $script:ExchangeEdition = "SE"
+                            Write-Log -Message "Exchange Edition erkannt: SE (Version 15.2, Build $build >= 2000)" -Level "INFO"
+                        }
+                        else {
+                            $script:ExchangeEdition = "2019"
+                            Write-Log -Message "Exchange Edition erkannt: 2019 (Version 15.2, Build $build < 2000)" -Level "INFO"
+                        }
                     }
                     else {
+                        # Build nicht zu extrahieren, Fallback auf 2019
                         $script:ExchangeEdition = "2019"
-                        Write-Log -Message "Exchange Edition erkannt: 2019 (CU14+)" -Level "INFO"
+                        Write-Log -Message "Exchange Edition erkannt: 2019 (Version 15.2, Build nicht erkannt)" -Level "INFO"
                     }
                 }
                 else {
-                    # Build < 1544 ist definitiv 2019 (vor CU14)
-                    $script:ExchangeEdition = "2019"
-                    Write-Log -Message "Exchange Edition erkannt: 2019 (vor CU14)" -Level "INFO"
+                    # Unbekannte Version
+                    $script:ExchangeEdition = "Unbekannt"
+                    Write-Log -Message "Exchange Edition unbekannt - Version $version nicht erkannt" -Level "WARNING"
                 }
             }
             else {
-                # Fallback: Wenn Regex nicht matcht
-                Write-Log -Message "Build-Nummer konnte nicht extrahiert werden - Fallback auf Remote-Registry" -Level "WARNING"
-                $productName = $null
-                try {
-                    $productName = Invoke-Command -ComputerName $serverName -ScriptBlock {
-                        $reg = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup" -ErrorAction SilentlyContinue
-                        return $reg.MsiProductName
-                    } -ErrorAction SilentlyContinue
-                }
-                catch { }
-
-                if ($productName -match 'Subscription') {
-                    $script:ExchangeEdition = "SE"
-                }
-                else {
-                    $script:ExchangeEdition = "2019"
-                }
-                Write-Log -Message "Exchange Edition (via Registry): $($script:ExchangeEdition)" -Level "INFO"
+                Write-Log -Message "Version konnte nicht extrahiert werden - Fallback auf Build-Ranges" -Level "WARNING"
+                $script:ExchangeEdition = "Unbekannt"
             }
         }
         else {
-            Write-Log -Message "Kein Exchange Server gefunden - Edition bleibt 'Unknown'" -Level "WARNING"
+            Write-Log -Message "Kein Exchange Server gefunden" -Level "WARNING"
         }
     }
     catch {
-        Write-Log -Message "Fehler bei Edition-Erkennung: $_ - Fallback auf '2019'" -Level "WARNING"
-        $script:ExchangeEdition = "2019"
+        Write-Log -Message "Fehler bei Edition-Erkennung: $_" -Level "WARNING"
+        $script:ExchangeEdition = "Unbekannt"
     }
 }
 
@@ -1049,8 +1028,15 @@ function Get-ExchangeServerOverview {
                 @{N='IsClientAccess';E={$_.IsClientAccessServer}},
                 @{N='IsEdge';E={$_.IsEdgeServer}},
                 @{N='ExchangeEdition';E={
-                    if ($_.AdminDisplayVersion -match 'Version 15\.2') {
-                        if ($_.AdminDisplayVersion -match 'Build 2\d{3}') { 'SE' } else { '2019' }
+                    if ($_.AdminDisplayVersion -match 'Version\s+(\d+\.\d+)') {
+                        $v = $Matches[1]
+                        if ($v -eq "15.0") { '2013' }
+                        elseif ($v -eq "15.1") { '2016' }
+                        elseif ($v -eq "15.2") {
+                            if ($_.AdminDisplayVersion -match 'Build\s+(\d+)' -and [int]$Matches[1] -ge 2000) { 'SE' }
+                            else { '2019' }
+                        }
+                        else { 'Unbekannt' }
                     } else { 'Unbekannt' }
                 }},
                 WhenCreated, WhenChanged

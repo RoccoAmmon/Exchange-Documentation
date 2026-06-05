@@ -1,9 +1,9 @@
 # 📊 Exchange Server Dokumentations-Tool
 
-> **Automatische Erfassung und Dokumentation von Microsoft Exchange On-Premises Umgebungen (Exchange 2019 & Subscription Edition)**
+> **Automatische Erfassung und Dokumentation von Microsoft Exchange On-Premises Umgebungen (Exchange 2013, 2016, 2019 & Subscription Edition)**
 
 [![Status](https://img.shields.io/badge/Status-Release-brightgreen?style=flat-square)](./CHANGELOG.md)
-[![Version](https://img.shields.io/badge/Version-1.1-blue?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-1.3-blue?style=flat-square)](./CHANGELOG.md)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-blue?style=flat-square)](https://www.microsoft.com/en-us/download/details.aspx?id=50395)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
 [![GitHub Issues](https://img.shields.io/github/issues/RoccoAmmon/Exchange-Documentation?style=flat-square)](https://github.com/RoccoAmmon/Exchange-Documentation/issues)
@@ -14,7 +14,7 @@
 
 Das **Exchange Dokumentations-Tool** ist ein umfassendes PowerShell-Skript, das automatisch eine detaillierte HTML-Dokumentation von Microsoft Exchange On-Premises Umgebungen erstellt. Es erfasst alle relevanten Konfigurationen, Systemeinstellungen und Sicherheitsaspekte – ideal für **Administratoren, Consultants, Auditoren und Compliance-Teams**.
 
-Das Tool unterstützt sowohl **Exchange Server 2019** als auch **Exchange Server Subscription Edition (SE)** und bietet intelligente Fallback-Mechanismen für robuste Netzwerk-Kommunikation.
+Das Tool unterstützt **Exchange Server 2013, 2016, 2019** sowie **Exchange Server Subscription Edition (SE)** und bietet intelligente Fallback-Mechanismen für robuste Netzwerk-Kommunikation. Die Exchange-Edition wird zuverlässig über die Versionsnummer (15.0/15.1/15.2) erkannt.
 
 ---
 
