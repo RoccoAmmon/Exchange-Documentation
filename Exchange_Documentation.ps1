@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Exchange On-Premises Dokumentations-Skript (v1.1 - Exchange 2019 & SE Support)
+    Exchange On-Premises Dokumentations-Skript (v1.2 - Exchange 2019 & SE Support)
 .DESCRIPTION
     Erstellt eine umfassende HTML-Dokumentation der gesamten Exchange On-Premises Umgebung.
     Unterstützt Exchange Server 2019 und Exchange Server Subscription Edition (SE).
@@ -10,6 +10,11 @@
     sodass das Skript auch funktioniert, wenn WinRM (PowerShell Remoting) nicht
     korrekt konfiguriert ist.
 
+    NEU in v1.2:
+    - TLS/SSL Konfiguration mit Best Practice Bewertung (Registry, Ciphers, Zertifikate)
+    - Windows Service TLS/TLS 1.2 Erzwingung
+    - Exchange Connector TLS-Settings Audit
+    
     NEU in v1.1:
     - Transportkomponenten - Physische Speicherorte (Queue-DB, Logs, Message-Tracking, SMTP-Protokoll, Safety-Net)
     
@@ -60,6 +65,7 @@
     - Event Logs (Fehler/Kritisch der letzten 7 Tage)
     - Hybrid-Konfiguration mit Exchange Online (Connectors, OAuth, Remote Mailboxes, Migration)
     - Sicherheit & Authentifizierung (TLS, OAuth, SMTP-Auth-Einstellungen)
+    - TLS/SSL Konfiguration (Windows Registry, Cipher Suites, Zertifikate mit Best Practice Bewertung)
     - Anti-Spam/Anti-Malware Konfiguration
     - Compliance (DLP, Litigation Hold, In-Place Hold)
     - Mailbox-Quotas und Warnungs-Schwellwerte
@@ -83,10 +89,11 @@
 
 .NOTES
     Autor:           Rocco Ammon
-    Version:         1.1
+    Version:         1.2
     Erstellt:        2026-03-05
-    Letzte Änderung: 2026-06-04
-    Änderungen:      v1.1 - Erweiterte Transportkomponenten-Dokumentation (Speicherorte, Queue-DB, Message-Tracking, SMTP-Logs, Safety-Net)
+    Letzte Änderung: 2026-06-05
+    Änderungen:      v1.2 - TLS/SSL Konfiguration mit Best Practice Bewertung
+                     v1.1 - Erweiterte Transportkomponenten-Dokumentation (Speicherorte, Queue-DB, Message-Tracking, SMTP-Logs, Safety-Net)
                      v1.0 - Erstveröffentlichung mit Exchange SE Unterstützung, EEMS Monitoring und erweiterten Sicherheits-/Compliance-Dokumentationen
                      v0.1 - Vorversionen / interne Tests (historisch)
     Voraussetzungen: - Exchange 2019 Management Shell/Snap-In ODER Exchange SE PowerShell-Modul
@@ -443,7 +450,7 @@ function Initialize-ExchangeEnvironment {
     }
 }
 
-function Detect-ExchangeEdition {
+function Get-ExchangeEdition {
     <#
     .SYNOPSIS
         Ermittelt die Exchange Edition (2019 oder SE) anhand der AdminDisplayVersion.
@@ -3102,7 +3109,301 @@ function Get-DKIMInfo {
 }
 
 # ---------------------------------------------------------------
-# 35. HYBRID-KONFIGURATION MIT EXCHANGE ONLINE
+# 35. TLS/SSL KONFIGURATION MIT BEST PRACTICE BEWERTUNG
+# ---------------------------------------------------------------
+function Get-TLSSSLConfigurationInfo {
+    <#
+    .SYNOPSIS
+        Dokumentiert die gesamte TLS/SSL-Konfiguration mit Best Practice Bewertung.
+        Prüft: Windows Registry (TLS 1.0-1.3), Cipher Suites, Send/Receive Connectors,
+        Zertifikate, PowerShell Remoting, und gibt eine Sicherheitsbewertung ab.
+    #>
+    Write-Log -Message "=== Sammle TLS/SSL Konfiguration ===" -Level "INFO"
+
+    $tlsHTML = ""
+
+    # --- Best Practice Matrix (Microsoft Empfehlungen für Exchange) ---
+    $bestPractices = @{
+        "TLS 1.0" = @{ Recommended = $false; Why = "Veraltet & unsicher (POODLE). MUSS deaktiviert sein." }
+        "TLS 1.1" = @{ Recommended = $false; Why = "Veraltet (RFC 8996 veraltet). SOLLTE deaktiviert sein." }
+        "TLS 1.2" = @{ Recommended = $true;  Why = "ERFORDERLICH. Mindeststandard für alle Verbindungen." }
+        "TLS 1.3" = @{ Recommended = $true;  Why = "EMPFOHLEN. Neuester Standard (RFC 8446), besser Sicherheit." }
+    }
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            $serverHTML = "<h3 class='server-break'>Server: $server - TLS/SSL Konfiguration</h3>"
+            
+            # ===== Methode 1: Remote Registry (kein WinRM nötig) =====
+            $tlsVersions = @{}
+            $regPath = "SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols"
+            
+            Write-Log -Message "Lese TLS-Versionen aus Registry ($server)..." -Level "INFO"
+            
+            foreach ($tlsVer in @("TLS 1.0", "TLS 1.1", "TLS 1.2", "TLS 1.3")) {
+                try {
+                    $regSubPath = "$regPath\$tlsVer\Server"
+                    $enabled = Get-RemoteRegistryValue -ComputerName $server -RegistryPath $regSubPath -ValueName "Enabled"
+                    $tlsVersions[$tlsVer] = @{
+                        Enabled = if ($enabled -eq 1) { "JA (AKTIVIERT)" } else { "NEIN (deaktiviert)" }
+                        EnabledValue = $enabled
+                        Recommended = $bestPractices[$tlsVer].Recommended
+                        Why = $bestPractices[$tlsVer].Why
+                    }
+                }
+                catch {
+                    $tlsVersions[$tlsVer] = @{
+                        Enabled = "Unbekannt (nicht in Registry)"
+                        EnabledValue = $null
+                        Recommended = $bestPractices[$tlsVer].Recommended
+                        Why = $bestPractices[$tlsVer].Why
+                    }
+                }
+            }
+            
+            # TLS-Versions-Tabelle
+            $tlsVersionsData = @()
+            $overallSecurityScore = 100
+            
+            foreach ($tlsVer in @("TLS 1.0", "TLS 1.1", "TLS 1.2", "TLS 1.3")) {
+                $status = $tlsVersions[$tlsVer].Enabled
+                $isEnabled = ($tlsVersions[$tlsVer].EnabledValue -eq 1)
+                $recommended = $tlsVersions[$tlsVer].Recommended
+                
+                # Bewertung
+                if ($tlsVer -eq "TLS 1.0" -and $isEnabled) {
+                    $assessment = "🔴 KRITISCH - MUSS deaktiviert sein!"
+                    $overallSecurityScore -= 40
+                }
+                elseif ($tlsVer -eq "TLS 1.1" -and $isEnabled) {
+                    $assessment = "🟡 WARNUNG - SOLLTE deaktiviert sein (RFC 8996)"
+                    $overallSecurityScore -= 15
+                }
+                elseif ($tlsVer -eq "TLS 1.2" -and -not $isEnabled) {
+                    $assessment = "🔴 KRITISCH - Muss aktiviert sein (Exchange Anforderung)!"
+                    $overallSecurityScore -= 50
+                }
+                elseif ($tlsVer -eq "TLS 1.2" -and $isEnabled) {
+                    $assessment = "✅ OK - Erforderlich und aktiv"
+                }
+                elseif ($tlsVer -eq "TLS 1.3" -and $isEnabled) {
+                    $assessment = "✅ SEHR GUT - Modern & sicher"
+                    $overallSecurityScore += 10
+                }
+                else {
+                    $assessment = "ⓘ Nicht aktiviert (optional)"
+                }
+                
+                $tlsVersionsData += [PSCustomObject]@{
+                    Version = $tlsVer
+                    Status = $status
+                    Empfohlen = if ($recommended) { "JA" } else { "NEIN" }
+                    Begründung = $tlsVersions[$tlsVer].Why
+                    Bewertung = $assessment
+                }
+            }
+            
+            $serverHTML += "<h4>TLS-Versionen (Windows Registry)</h4>"
+            $serverHTML += (ConvertTo-HTMLTable -Data $tlsVersionsData)
+            
+            # Gesamtbewertung
+            if ($overallSecurityScore -lt 0) { $overallSecurityScore = 0 }
+            if ($overallSecurityScore -gt 100) { $overallSecurityScore = 100 }
+            
+            $securityRating = switch -Exact ($overallSecurityScore) {
+                { $_ -ge 90 } { "🟢 AUSGEZEICHNET"; break }
+                { $_ -ge 70 } { "🟢 GUT"; break }
+                { $_ -ge 50 } { "🟡 AKZEPTABEL (Verbesserungen empfohlen)"; break }
+                { $_ -ge 30 } { "🔴 SCHWACH (Kritische Mängel)"; break }
+                default { "🔴 SEHR SCHLECHT (Sofort beheben!)"; break }
+            }
+            
+            $serverHTML += "<div class='summary-box'><h4>TLS/SSL Sicherheitsbewertung: $securityRating ($overallSecurityScore/100)</h4></div>"
+            
+            # ===== Cipher Suites (via PowerShell Remoting) =====
+            try {
+                Write-Log -Message "Lese Cipher Suites von $server..." -Level "INFO"
+                $cipherData = Invoke-Command -ComputerName $server -ScriptBlock {
+                    try {
+                        $winRMPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp\DefaultSecureProtocols"
+                        $dsPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers"
+                        
+                        $tlsDefault = Get-ItemProperty -Path $winRMPath -ErrorAction SilentlyContinue
+                        $ciphers = Get-ChildItem -Path $dsPath -ErrorAction SilentlyContinue
+                        
+                        return @{
+                            TLSDefault = $tlsDefault.DefaultSecureProtocols
+                            CipherCount = $ciphers.Count
+                            CipherNames = ($ciphers | Select-Object -ExpandProperty PSChildName | Select-Object -First 20) -join ", "
+                        }
+                    }
+                    catch { return $null }
+                } -ErrorAction SilentlyContinue
+                
+                if ($cipherData) {
+                    $serverHTML += "<h4>Cipher Suites Konfiguration</h4>"
+                    $cipherHTML = "<p><strong>Standard-Protokolle:</strong> "
+                    if ($cipherData.TLSDefault) {
+                        # Dekodierung der Hexadezimalwerte
+                        if ($cipherData.TLSDefault -eq 0x00000008) {
+                            $cipherHTML += "TLS 1.0 (VERALTET!)"
+                        }
+                        elseif ($cipherData.TLSDefault -eq 0x00000020) {
+                            $cipherHTML += "TLS 1.1 (VERALTET!)"
+                        }
+                        elseif ($cipherData.TLSDefault -eq 0x00000080) {
+                            $cipherHTML += "TLS 1.2 (Standard)"
+                        }
+                        else {
+                            $cipherHTML += "Hex: 0x$([Convert]::ToString($cipherData.TLSDefault, 16))"
+                        }
+                    }
+                    $cipherHTML += "</p>"
+                    $cipherHTML += "<p><strong>Konfigurierte Cipher Suites:</strong> $($cipherData.CipherCount) Suites konfiguriert</p>"
+                    $cipherHTML += "<p><strong>Aktive Ciphers (Top 20):</strong></p><pre style='background-color:#f5f5f5; padding:10px; overflow-x:auto;'>$($cipherData.CipherNames)</pre>"
+                    $serverHTML += $cipherHTML
+                }
+            }
+            catch {
+                Write-Log -Message "Cipher Suite Abfrage fehlgeschlagen für ${server}: $_" -Level "WARNING"
+                $serverHTML += "<p class='no-data'>Cipher Suite-Details nicht abrufbar (benötigt Invoke-Command).</p>"
+            }
+            
+            # ===== Receive Connectors TLS Konfiguration =====
+            try {
+                Write-Log -Message "Prüfe Receive Connector TLS auf $server..." -Level "INFO"
+                $rcConnectors = Get-ReceiveConnector -ErrorAction SilentlyContinue | Where-Object { $_.Server -eq $server }
+                
+                if ($rcConnectors) {
+                    $rcTLSData = foreach ($rc in $rcConnectors) {
+                        [PSCustomObject]@{
+                            Name = $rc.Name
+                            "TLS erforderlich" = $rc.RequireTLS
+                            "TLS Auth Level" = $rc.TlsAuthLevel
+                            "TLS Zertifikat" = $rc.TlsCertificateName
+                            "Auth Mechanismen" = ($rc.AuthMechanism -join ", ")
+                            "Domains mit sicherer TLS" = if ((Get-TransportConfig).TLSReceiveDomainSecureList.Count -gt 0) { "Ja" } else { "Nein" }
+                            Bewertung = if ($rc.RequireTLS) { "✅ OK" } else { "🟡 Warnung - TLS sollte erzwungen sein" }
+                        }
+                    }
+                    $serverHTML += "<h4>Receive Connectors - TLS Konfiguration</h4>"
+                    $serverHTML += (ConvertTo-HTMLTable -Data $rcTLSData)
+                }
+            }
+            catch {
+                Write-Log -Message "Receive Connector TLS-Prüfung fehlgeschlagen: $_" -Level "WARNING"
+            }
+            
+            # ===== Send Connectors TLS Konfiguration =====
+            try {
+                Write-Log -Message "Prüfe Send Connector TLS auf $server..." -Level "INFO"
+                $scConnectors = Get-SendConnector -ErrorAction SilentlyContinue | Where-Object { $_.SourceTransportServers -contains $server }
+                
+                if ($scConnectors) {
+                    $scTLSData = foreach ($sc in $scConnectors) {
+                        [PSCustomObject]@{
+                            Name = $sc.Name
+                            "TLS erforderlich" = $sc.RequireTLS
+                            "TLS Auth Level" = $sc.TlsAuthLevel
+                            "TLS Domain" = $sc.TlsDomain
+                            "TLS Zertifikat" = $sc.TlsCertificateName
+                            "Smart Host Auth" = $sc.SmartHostAuthMechanism
+                            Bewertung = if ($sc.RequireTLS) { "✅ OK" } else { "🟡 Warnung - TLS sollte erzwungen sein" }
+                        }
+                    }
+                    $serverHTML += "<h4>Send Connectors - TLS Konfiguration</h4>"
+                    $serverHTML += (ConvertTo-HTMLTable -Data $scTLSData)
+                }
+            }
+            catch {
+                Write-Log -Message "Send Connector TLS-Prüfung fehlgeschlagen: $_" -Level "WARNING"
+            }
+            
+            # ===== Zertifikate mit TLS-Validierung =====
+            try {
+                Write-Log -Message "Prüfe Zertifikate auf $server..." -Level "INFO"
+                $certs = Get-ExchangeCertificate -Server $server -ErrorAction SilentlyContinue
+                
+                if ($certs) {
+                    $certTLSData = foreach ($cert in $certs) {
+                        $daysLeft = [math]::Round(($cert.NotAfter - (Get-Date)).TotalDays, 0)
+                        if ($daysLeft -lt 0) {
+                            $certStatus = "ABGELAUFEN"
+                        }
+                        elseif ($daysLeft -lt 30) {
+                            $certStatus = "DRINGEND - laeuft in $daysLeft Tagen ab"
+                        }
+                        elseif ($daysLeft -lt 90) {
+                            $certStatus = "WARNUNG - laeuft in $daysLeft Tagen ab"
+                        }
+                        else {
+                            $certStatus = "OK - $daysLeft Tage verbleibend"
+                        }
+                        
+                        # Zertifikat-Typ Bewertung
+                        $certTypeAssess = if ($cert.IsSelfSigned) { "⚠️ SELF-SIGNED" } else { "✅ CA-signiert" }
+                        
+                        [PSCustomObject]@{
+                            Subject = $cert.Subject
+                            Dienste = ($cert.Services -join ", ")
+                            "Nicht nach" = $cert.NotAfter.ToString("dd.MM.yyyy")
+                            Status = $certStatus
+                            "Zertifikatstyp" = $certTypeAssess
+                            "Public Key Länge" = "$($cert.PublicKeySize) Bit"
+                        }
+                    }
+                    $serverHTML += "<h4>Zertifikate (TLS/SSL)</h4>"
+                    $serverHTML += (ConvertTo-HTMLTable -Data $certTLSData)
+                }
+            }
+            catch {
+                Write-Log -Message "Zertifikat-Prüfung fehlgeschlagen für ${server}: $_" -Level "WARNING"
+            }
+            
+            # ===== PowerShell Remoting TLS =====
+            try {
+                $psRemotingPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Service"
+                $psAuthValue = Get-RemoteRegistryValue -ComputerName $server -RegistryPath $psRemotingPath -ValueName "Auth"
+                
+                $serverHTML += "<h4>PowerShell Remoting TLS-Einstellungen</h4>"
+                $serverHTML += "<p><strong>WinRM Service Auth (Registry):</strong> $(if ($psAuthValue) { $psAuthValue } else { 'Standard' })</p>"
+                $serverHTML += "<p><em>Hinweis: WinRM sollte nur Kerberos oder Certificate-basierte Auth verwenden, nicht Basic Auth über HTTP.</em></p>"
+            }
+            catch {
+                Write-Log -Message "PowerShell Remoting Prüfung fehlgeschlagen für ${server}: $_" -Level "WARNING"
+            }
+            
+            # ===== Best Practice Empfehlungen =====
+            $serverHTML += "<h4>Best Practice Empfehlungen (Microsoft Exchange)</h4>"
+            $serverHTML += "<ul>"
+            $serverHTML += "<li><strong>TLS 1.0 &amp; 1.1:</strong> Deaktivieren (POODLE, RC4, andere Schwachstellen). Registry-Wert 'Enabled' auf 0 setzen.</li>"
+            $serverHTML += "<li><strong>TLS 1.2:</strong> Muss aktiviert sein (Mindestanforderung Exchange). Verwende mindestens SHA-256 Signierung.</li>"
+            $serverHTML += "<li><strong>TLS 1.3:</strong> Falls Windows Server 2022+ oder höher - aktivieren für zusätzliche Sicherheit.</li>"
+            $serverHTML += "<li><strong>Cipher Suites:</strong> Verwende nur Strong Ciphers (ECDHE, AES-GCM). Deaktiviere anon, NULL, MD5, RC4 Suites.</li>"
+            $serverHTML += "<li><strong>Zertifikate:</strong> Mindestens 2048-Bit RSA oder 256-Bit ECDSA. SHA-256 Signierung. Validität &gt; 1 Jahr.</li>"
+            $serverHTML += "<li><strong>Connector TLS:</strong> RequireTLS=True für interne &amp; externe Connectors. TlsAuthLevel=DomainValidation oder CertificateValidation.</li>"
+            $serverHTML += "<li><strong>DNS-Sicherheit:</strong> Nutze DNSSEC für MX-Records. Authentifizierung per SPF/DKIM/DMARC.</li>"
+            $serverHTML += "<li><strong>Monitoring:</strong> Überwache Zertifikat-Ablauf &amp; TLS-Handshake-Fehler in Event Logs (SCHANNEL Events).</li>"
+            $serverHTML += "</ul>"
+            
+            # Verweis auf MS-Dokumentation
+            $serverHTML += "<h4>Weiterführende Ressourcen</h4>"
+            $serverHTML += "<p><em><a href='https://docs.microsoft.com/en-us/Exchange/security-and-compliance/best-practices-for-security' target='_blank'>Microsoft Exchange Security Best Practices</a></em></p>"
+            $serverHTML += "<p><em><a href='https://docs.microsoft.com/en-us/windows-server/security/tls/tls-registry-settings' target='_blank'>TLS Registry Settings - Microsoft Docs</a></em></p>"
+            
+            $tlsHTML += $serverHTML
+        }
+        catch {
+            Write-Log -Message "Allgemeiner Fehler bei TLS/SSL-Konfiguration für ${server}: $_" -Level "ERROR"
+            $tlsHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+
+    New-HTMLSection -Title "TLS/SSL Konfiguration & Best Practices" -Content $tlsHTML
+}
+
+# ---------------------------------------------------------------
+# 36. HYBRID-KONFIGURATION MIT EXCHANGE ONLINE
 # ---------------------------------------------------------------
 function Get-HybridConfigurationInfo {
     <#
@@ -3634,6 +3935,9 @@ function Get-DocSectionRegistry {
         [PSCustomObject]@{ Key = "Compliance";         Label = "Compliance & DLP";                  Category = "Compliance";         Function = "Get-ComplianceInfo" }
         [PSCustomObject]@{ Key = "Retention";          Label = "Retention & Journal";               Category = "Compliance";         Function = "Get-RetentionPolicyInfo" }
 
+        # === TLS/SSL & SICHERHEIT ===
+        [PSCustomObject]@{ Key = "TLS";                Label = "TLS/SSL Konfiguration";             Category = "Sicherheit & TLS";   Function = "Get-TLSSSLConfigurationInfo" }
+
         # === HYBRID ===
         [PSCustomObject]@{ Key = "Hybrid";             Label = "Hybrid mit Exchange Online";        Category = "Hybrid / Cloud";     Function = "Get-HybridConfigurationInfo" }
     )
@@ -3839,16 +4143,22 @@ function Show-DocumentationGui {
         [string]$DefaultOutputPath
     )
 
-    Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
+    try {
+        # WPF Assemblies laden
+        Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase -ErrorAction Stop
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+    }
+    catch {
+        Write-Host "FEHLER: WPF-Assemblies konnten nicht geladen werden: $_" -ForegroundColor Red
+        return $null
+    }
 
     # --- Exchange Server automatisch erkennen ---
     $detectedServers = @()
     try {
-        # Versuche Exchange Snap-In / Modul zu laden (falls noch nicht geladen)
         $snapInLoaded = Get-PSSnapin -Name "Microsoft.Exchange.Management.PowerShell.SnapIn" -ErrorAction SilentlyContinue
         $moduleLoaded = Get-Module -Name "ExchangeManagementTools" -ErrorAction SilentlyContinue
         if (-not $snapInLoaded -and -not $moduleLoaded) {
-            # Snap-In laden
             if (Get-PSSnapin -Registered -Name "Microsoft.Exchange.Management.PowerShell.SnapIn" -ErrorAction SilentlyContinue) {
                 Add-PSSnapin "Microsoft.Exchange.Management.PowerShell.SnapIn" -ErrorAction SilentlyContinue
             }
@@ -3865,7 +4175,7 @@ function Show-DocumentationGui {
     [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Exchange Server Dokumentation v1.0" Height="900" Width="1100"
+        Title="Exchange Server Dokumentation v1.2" Height="900" Width="1100"
         WindowStartupLocation="CenterScreen" Background="#F5F5F5" ResizeMode="CanResize" MinWidth="900" MinHeight="700">
     <Grid Margin="20">
         <Grid.RowDefinitions>
@@ -3878,17 +4188,14 @@ function Show-DocumentationGui {
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- HEADER -->
         <Border Grid.Row="0" Background="#0078D4" CornerRadius="6" Padding="15" Margin="0,0,0,15">
             <StackPanel>
                 <TextBlock Text="Exchange Server Dokumentation" FontSize="24" FontWeight="Bold" Foreground="White"/>
-                <TextBlock Text="Automatische Erkennung der Server | Auswahl der Dokumentationsbereiche | Multi-Format Export" 
-                           Foreground="#B3D9FF" FontSize="12" Margin="0,4,0,0"/>
+                <TextBlock Text="TLS/SSL Konfiguration | Automatische Erkennung | Multi-Format Export" Foreground="#B3D9FF" FontSize="12" Margin="0,4,0,0"/>
             </StackPanel>
         </Border>
 
-        <!-- SERVER-AUSWAHL -->
-        <GroupBox Grid.Row="1" Header="📦 Exchange Server" Margin="0,0,0,12" Padding="10" Background="White">
+        <GroupBox Grid.Row="1" Header="Exchange Server" Margin="0,0,0,12" Padding="10" Background="White">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -3898,99 +4205,97 @@ function Show-DocumentationGui {
                     <CheckBox Name="ChkSelectAllServers" Content="Alle Server" FontWeight="Bold" Margin="0,0,20,0" VerticalAlignment="Center"/>
                     <TextBlock Text="Erkannte Server:" VerticalAlignment="Center" Foreground="#555" Margin="0,0,10,0"/>
                 </StackPanel>
-                <WrapPanel Grid.Row="1" Name="ServerPanel" Orientation="Horizontal"/>
-                <TextBox Grid.Row="1" Name="TxtServersManual" Height="28" Visibility="Collapsed" 
-                         VerticalContentAlignment="Center" Margin="0,4,0,0"/>
+                <WrapPanel Grid.Row="1" Name="ServerPanel" Orientation="Horizontal" MinHeight="30"/>
+                <TextBox Grid.Row="1" Name="TxtServersManual" Height="28" Visibility="Collapsed" VerticalContentAlignment="Center" Margin="0,4,0,0"/>
             </Grid>
         </GroupBox>
 
-        <!-- ALLGEMEINE EINSTELLUNGEN -->
         <Grid Grid.Row="2" Margin="0,0,0,12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="20"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-
-            <GroupBox Grid.Column="0" Header="🏢 Organisation" Padding="10" Background="White">
+            <GroupBox Grid.Column="0" Header="Organisation" Padding="10" Background="White">
                 <TextBox Name="TxtCompany" Height="28" VerticalContentAlignment="Center"/>
             </GroupBox>
-
-            <GroupBox Grid.Column="2" Header="📂 Ausgabepfad" Padding="10" Background="White">
+            <GroupBox Grid.Column="2" Header="Ausgabepfad" Padding="10" Background="White">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBox Grid.Column="0" Name="TxtOutputPath" Height="28" VerticalContentAlignment="Center"/>
-                    <Button Grid.Column="1" Name="BtnBrowse" Content="..." Width="40" Height="28" Margin="8,0,0,0"/>
+                    <Button Grid.Column="1" Name="BtnBrowse" Content="..." Width="40" Height="28" Margin="8,0,0,0" Padding="0"/>
                 </Grid>
             </GroupBox>
         </Grid>
 
-        <!-- AUSGABEFORMATE -->
-        <GroupBox Grid.Row="3" Header="📄 Ausgabeformate" Margin="0,0,0,12" Padding="10" Background="White">
+        <GroupBox Grid.Row="3" Header="Ausgabeformate" Margin="0,0,0,12" Padding="10" Background="White">
             <StackPanel Orientation="Horizontal">
                 <CheckBox Name="ChkHtml" Content="HTML" IsChecked="True" Margin="0,0,30,0" VerticalAlignment="Center" FontSize="13"/>
-                <CheckBox Name="ChkPdf" Content="PDF (Word/Browser)" Margin="0,0,30,0" VerticalAlignment="Center" FontSize="13"/>
-                <CheckBox Name="ChkMarkdown" Content="Markdown (.md)" VerticalAlignment="Center" FontSize="13"/>
+                <CheckBox Name="ChkPdf" Content="PDF" Margin="0,0,30,0" VerticalAlignment="Center" FontSize="13"/>
+                <CheckBox Name="ChkMarkdown" Content="Markdown" VerticalAlignment="Center" FontSize="13"/>
             </StackPanel>
         </GroupBox>
 
-        <!-- DOKUMENTATIONSBEREICHE -->
-        <GroupBox Grid.Row="4" Header="📋 Zu dokumentierende Bereiche" Margin="0,0,0,12" Background="White">
+        <GroupBox Grid.Row="4" Header="Dokumentationsbereiche (nach Kategorien)" Margin="0,0,0,12" Padding="10" Background="White">
             <DockPanel>
-                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="10,8,10,8">
-                    <CheckBox Name="ChkSelectAll" Content="✓ Alle auswählen" FontWeight="Bold" Margin="0,0,30,0" IsChecked="True"/>
-                    <TextBlock Text="Bereiche nach Themen gruppiert" Foreground="#666" VerticalAlignment="Center"/>
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
+                    <CheckBox Name="ChkSelectAll" Content="Alle auswählen" FontWeight="Bold" IsChecked="True" VerticalAlignment="Center"/>
                 </StackPanel>
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="5">
-                    <WrapPanel Name="CategoryPanel" Orientation="Horizontal" ItemWidth="340"/>
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Name="CategoryPanel" Orientation="Vertical"/>
                 </ScrollViewer>
             </DockPanel>
         </GroupBox>
 
-        <!-- STATUS -->
-        <TextBlock Grid.Row="5" Name="TxtStatus" Foreground="#D32F2F" FontWeight="Bold" Margin="0,0,0,10" TextWrapping="Wrap"/>
+        <TextBlock Grid.Row="5" Name="TxtStatus" Foreground="#D32F2F" FontWeight="Bold" Margin="0,0,0,12" TextWrapping="Wrap" MinHeight="20"/>
 
-        <!-- BUTTONS -->
-        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button Name="BtnStart" Content="🚀 Dokumentation starten" Width="200" Height="40"
-                    Background="#0078D4" Foreground="White" FontWeight="Bold" FontSize="14" Margin="0,0,12,0">
-                <Button.Resources>
-                    <Style TargetType="Border"><Setter Property="CornerRadius" Value="4"/></Style>
-                </Button.Resources>
-            </Button>
-            <Button Name="BtnCancel" Content="Abbrechen" Width="120" Height="40" FontSize="13"/>
+        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+            <Button Name="BtnStart" Content="DOKUMENTATION STARTEN" Width="220" Height="40" Background="#0078D4" Foreground="White" FontWeight="Bold" FontSize="14" Margin="0,0,12,0" Padding="5"/>
+            <Button Name="BtnCancel" Content="Abbrechen" Width="120" Height="40" FontSize="13" Padding="5"/>
         </StackPanel>
     </Grid>
 </Window>
 '@
 
-    $reader = New-Object System.Xml.XmlNodeReader $xaml
-    $window = [Windows.Markup.XamlReader]::Load($reader)
+    try {
+        $reader = New-Object System.Xml.XmlNodeReader $xaml
+        $window = [Windows.Markup.XamlReader]::Load($reader)
+    }
+    catch {
+        Write-Host "FEHLER beim Laden der XAML: $_" -ForegroundColor Red
+        return $null
+    }
 
     # Steuerelemente referenzieren
-    $chkSelectAllServers = $window.FindName("ChkSelectAllServers")
-    $serverPanel         = $window.FindName("ServerPanel")
-    $txtServersManual    = $window.FindName("TxtServersManual")
-    $txtCompany          = $window.FindName("TxtCompany")
-    $txtOutputPath       = $window.FindName("TxtOutputPath")
-    $btnBrowse           = $window.FindName("BtnBrowse")
-    $chkHtml             = $window.FindName("ChkHtml")
-    $chkPdf              = $window.FindName("ChkPdf")
-    $chkMarkdown         = $window.FindName("ChkMarkdown")
-    $chkSelectAll        = $window.FindName("ChkSelectAll")
-    $categoryPanel       = $window.FindName("CategoryPanel")
-    $txtStatus           = $window.FindName("TxtStatus")
-    $btnStart            = $window.FindName("BtnStart")
-    $btnCancel           = $window.FindName("BtnCancel")
+    try {
+        $chkSelectAllServers = $window.FindName("ChkSelectAllServers")
+        $serverPanel         = $window.FindName("ServerPanel")
+        $txtServersManual    = $window.FindName("TxtServersManual")
+        $txtCompany          = $window.FindName("TxtCompany")
+        $txtOutputPath       = $window.FindName("TxtOutputPath")
+        $btnBrowse           = $window.FindName("BtnBrowse")
+        $chkHtml             = $window.FindName("ChkHtml")
+        $chkPdf              = $window.FindName("ChkPdf")
+        $chkMarkdown         = $window.FindName("ChkMarkdown")
+        $chkSelectAll        = $window.FindName("ChkSelectAll")
+        $categoryPanel       = $window.FindName("CategoryPanel")
+        $txtStatus           = $window.FindName("TxtStatus")
+        $btnStart            = $window.FindName("BtnStart")
+        $btnCancel           = $window.FindName("BtnCancel")
+    }
+    catch {
+        Write-Host "FEHLER beim Zugriff auf GUI-Steuerelemente: $_" -ForegroundColor Red
+        return $null
+    }
 
     # Vorbelegung
     $txtCompany.Text    = $DefaultCompany
     $txtOutputPath.Text = $DefaultOutputPath
 
-    # --- Server-Checkboxen oder manuelles Feld ---
+    # Server-Checkboxen
     $serverCheckboxes = @{}
     if ($detectedServers.Count -gt 0) {
         foreach ($srv in $detectedServers) {
@@ -4006,14 +4311,12 @@ function Show-DocumentationGui {
         $chkSelectAllServers.IsChecked = $true
     }
     else {
-        # Keine Server gefunden - zeige manuelles Textfeld
         $serverPanel.Visibility = "Collapsed"
         $txtServersManual.Visibility = "Visible"
         $txtServersManual.Text = $DefaultServers
         $chkSelectAllServers.Visibility = "Collapsed"
     }
 
-    # "Alle Server" Checkbox-Logik
     $chkSelectAllServers.Add_Click({
         $state = $chkSelectAllServers.IsChecked
         foreach ($cb in $serverPanel.Children) {
@@ -4021,20 +4324,17 @@ function Show-DocumentationGui {
         }
     })
 
-    # --- Sektions-Checkboxen nach Kategorien gruppiert ---
+    # Sektions-Checkboxen
     $sectionCheckboxes = @{}
     $registry = Get-DocSectionRegistry
     $categories = $registry | Group-Object -Property Category
 
     foreach ($cat in $categories) {
-        # GroupBox pro Kategorie
         $gb = New-Object System.Windows.Controls.GroupBox
         $gb.Header = $cat.Name
-        $gb.Margin = "5"
+        $gb.Margin = "0,0,0,10"
         $gb.Padding = "8"
         $gb.Background = [System.Windows.Media.Brushes]::White
-        $gb.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromRgb(0, 120, 212))
-        $gb.BorderThickness = "1"
 
         $sp = New-Object System.Windows.Controls.StackPanel
         $sp.Orientation = "Vertical"
@@ -4049,12 +4349,10 @@ function Show-DocumentationGui {
             [void]$sp.Children.Add($cb)
             $sectionCheckboxes[$section.Key] = $cb
         }
-
         $gb.Content = $sp
         [void]$categoryPanel.Children.Add($gb)
     }
 
-    # "Alle auswählen" Logik für Sektionen
     $chkSelectAll.Add_Click({
         $state = $chkSelectAll.IsChecked
         foreach ($key in $sectionCheckboxes.Keys) {
@@ -4062,7 +4360,6 @@ function Show-DocumentationGui {
         }
     })
 
-    # Durchsuchen-Dialog
     $btnBrowse.Add_Click({
         $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
         $dlg.Description = "Ausgabeverzeichnis wählen"
@@ -4072,13 +4369,11 @@ function Show-DocumentationGui {
         }
     })
 
-    # Ergebnis-Container
     $script:GuiResult = $null
 
     $btnStart.Add_Click({
         $txtStatus.Text = ""
 
-        # Server ermitteln
         $selectedServers = @()
         if ($detectedServers.Count -gt 0) {
             foreach ($srv in $serverCheckboxes.Keys) {
@@ -4090,11 +4385,11 @@ function Show-DocumentationGui {
         }
 
         if ($selectedServers.Count -eq 0) {
-            $txtStatus.Text = "⚠️ Bitte mindestens einen Exchange-Server auswählen."
+            $txtStatus.Text = "Fehler: Bitte mindestens einen Exchange-Server auswählen."
             return
         }
         if ([string]::IsNullOrWhiteSpace($txtOutputPath.Text)) {
-            $txtStatus.Text = "⚠️ Bitte einen Ausgabepfad angeben."
+            $txtStatus.Text = "Fehler: Bitte einen Ausgabepfad angeben."
             return
         }
 
@@ -4103,7 +4398,7 @@ function Show-DocumentationGui {
             if ($sectionCheckboxes[$key].IsChecked) { $selectedSections += $key }
         }
         if ($selectedSections.Count -eq 0) {
-            $txtStatus.Text = "⚠️ Bitte mindestens einen Dokumentationsbereich auswählen."
+            $txtStatus.Text = "Fehler: Bitte mindestens einen Dokumentationsbereich auswählen."
             return
         }
 
@@ -4112,7 +4407,7 @@ function Show-DocumentationGui {
         if ($chkPdf.IsChecked)      { $formats += "PDF" }
         if ($chkMarkdown.IsChecked) { $formats += "Markdown" }
         if ($formats.Count -eq 0) {
-            $txtStatus.Text = "⚠️ Bitte mindestens ein Ausgabeformat wählen."
+            $txtStatus.Text = "Fehler: Bitte mindestens ein Ausgabeformat wählen."
             return
         }
 
@@ -4220,7 +4515,7 @@ try {
     }
 
     # Edition erkennen (2019 vs. SE)
-    Detect-ExchangeEdition
+    Get-ExchangeEdition
 
     # DocTitle dynamisch anpassen
     $script:DocTitle = "Exchange Server $($script:ExchangeEdition) - Umgebungsdokumentation"
