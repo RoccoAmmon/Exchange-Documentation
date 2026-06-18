@@ -7,6 +7,8 @@
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-blue?style=flat-square)](https://www.microsoft.com/en-us/download/details.aspx?id=50395)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
 [![GitHub Issues](https://img.shields.io/github/issues/RoccoAmmon/Exchange-Documentation?style=flat-square)](https://github.com/RoccoAmmon/Exchange-Documentation/issues)
+[![Downloads](https://img.shields.io/github/downloads/RoccoAmmon/Exchange-Documentation/total?style=flat-square&label=Downloads&color=orange)](https://github.com/RoccoAmmon/Exchange-Documentation/releases)
+[![Latest Release Downloads](https://img.shields.io/github/downloads/RoccoAmmon/Exchange-Documentation/latest/total?style=flat-square&label=Latest)](https://github.com/RoccoAmmon/Exchange-Documentation/releases/latest)
 
 ---
 
@@ -96,7 +98,38 @@ Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope CurrentUser
 
 ---
 
-## 📖 Verwendungsbeispiele
+## � Downloads
+
+### Direkte Download-Optionen
+
+| Methode | Link | Info |
+|---|---|---|
+| **🔗 Raw-Download (Main)** | [Exchange_Documentation.ps1](https://raw.githubusercontent.com/RoccoAmmon/Exchange-Documentation/main/Exchange_Documentation.ps1) | Neueste Version direkt vom Repository |
+| **📦 Git Clone** | `git clone https://github.com/RoccoAmmon/Exchange-Documentation.git` | Komplettes Repository mit Versionskontrolle |
+| **📋 Releases** | [Alle Releases](https://github.com/RoccoAmmon/Exchange-Documentation/releases) | Veröffentlichte Versionen (wenn verfügbar) |
+| **⬇️ ZIP Download** | [Download ZIP](https://github.com/RoccoAmmon/Exchange-Documentation/archive/refs/heads/main.zip) | Komplettes Repository als ZIP |
+
+> **💡 Empfehlung:** Nutze `git clone` für regelmäßige Updates und Best Practices!
+
+### Schneller Download der PS1-Datei
+
+```powershell
+# Direkt herunterladen und speichern
+$ScriptUrl = "https://raw.githubusercontent.com/RoccoAmmon/Exchange-Documentation/main/Exchange_Documentation.ps1"
+$OutFile = "C:\Scripts\Exchange_Documentation.ps1"
+Invoke-WebRequest -Uri $ScriptUrl -OutFile $OutFile
+Write-Host "✓ Heruntergeladen: $OutFile"
+```
+
+### 📊 Community-Nutzung
+
+Die aktuellen Zugriffs- und Download-Statistiken finden Sie:
+- **Badges oben:** Live-Statistiken für den gesamten Download
+- **[GitHub Insights](https://github.com/RoccoAmmon/Exchange-Documentation/graphs/traffic):** Detaillierte Traffic- und Download-Analysen
+
+---
+
+## �📖 Verwendungsbeispiele
 
 ### Einfaches Beispiel (GUI-Auswahl)
 ```powershell
