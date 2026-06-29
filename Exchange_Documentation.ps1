@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Exchange On-Premises Dokumentations-Skript (v1.3 - Exchange 2013/2016/2019 & SE Support)
+    Exchange On-Premises Dokumentations-Skript (v1.4 - Exchange 2013/2016/2019 & SE Support)
 .DESCRIPTION
     Erstellt eine umfassende HTML-Dokumentation der gesamten Exchange On-Premises Umgebung.
     Unterstützt Exchange Server 2019 und Exchange Server Subscription Edition (SE).
@@ -10,6 +10,19 @@
     sodass das Skript auch funktioniert, wenn WinRM (PowerShell Remoting) nicht
     korrekt konfiguriert ist.
 
+    NEU in v1.4 (17 Health Checks):
+    - Automatischer Neustart mit Administrator-Rechten
+    - Auflistung installierter Software pro Server
+    - NIC Speed & Performance Checks (Gbps-Warnung)
+    - Power Plan Konfiguration (Best Practice: Höchste Leistung)
+    - SMBv1 Status & Security Check
+    - Processor Core Analyse (Mindestanforderung 4 Kerne)
+    - RAM Requirements Check (Exchange-spezifisch)
+    - Certificate Expiration Status (Ablauf-Überwachung mit Ampel)
+    - Exchange Service Status (Kritische Services)
+    - IIS Application Pool Konfiguration
+    - DAG Replication Health (nur wenn konfiguriert)
+    
     NEU in v1.3:
     - Zuverlässigere Exchange-Edition-Erkennung über Versionsnummer (15.0/15.1/15.2)
     - Zusätzliche Unterstützung für Exchange 2013 (Version 15.0) und Exchange 2016 (Version 15.1)
@@ -37,6 +50,11 @@
 
     Dokumentiert werden u.a.:
     - Hardware-Informationen (OS, RAM, CPU, Festplatten, Netzwerk)
+    - Installierte Software (Programme, Versionen, Hersteller, Installationsdatum)
+    - Netzwerk-Performance (NIC Speed, Duplex-Mode) - mit 1 Gbps Best-Practice-Warnung
+    - Power Plan Status (Sollte auf "Höchste Leistung" eingestellt sein)
+    - SMBv1 Status (Security Best Practice: deaktiviert)
+    - DAG Replication Health (mit Prüfung ob DAG konfiguriert ist)
     - Windows- und Exchange-Patches
     - FSMO-Rollen und AD-Informationen
     - Schema-Version (inkl. Exchange Schema Mapping für 2019 & SE)
@@ -95,10 +113,22 @@
 
 .NOTES
     Autor:           Rocco Ammon
-    Version:         1.3
+    Version:         1.4
     Erstellt:        2026-03-05
-    Letzte Änderung: 2026-06-10
-    Änderungen:      v1.3 - Verbesserte Exchange-Edition-Erkennung (Unterstützung 2013/2016/2019/SE via Versionsnummer)
+    Letzte Änderung: 2026-06-29
+    Änderungen:      v1.4 - Finale Release mit HealthChecker & IIS Fixes:
+                          • Processor Core Analyse (Mindestanforderung 4 Kerne)
+                          • RAM Requirements Check (Exchange-spezifisch)
+                          • Certificate Expiration Status (Ablauf-Überwachung)
+                          • Exchange Service Status (Kritische Services)
+                          • IIS Application Pool Konfiguration
+                          • NIC Speed & Performance Checks
+                          • Power Plan Konfiguration
+                          • SMBv1 Status & Security Check
+                          • DAG Replication Health
+                          • Automatischer Neustart mit Administrator-Rechten
+                          • Auflistung installierter Software pro Server
+                     v1.3 - Verbesserte Exchange-Edition-Erkennung (Unterstützung 2013/2016/2019/SE via Versionsnummer)
                      v1.2 - TLS/SSL Konfiguration mit Best Practice Bewertung
                      v1.1 - Erweiterte Transportkomponenten-Dokumentation (Speicherorte, Queue-DB, Message-Tracking, SMTP-Logs, Safety-Net)
                      v1.0 - Erstveröffentlichung mit Exchange SE Unterstützung, EEMS Monitoring und erweiterten Sicherheits-/Compliance-Dokumentationen
@@ -133,6 +163,53 @@ param(
     [Parameter(Mandatory = $false, HelpMessage = "GUI unterdrücken und direkt mit Parametern starten")]
     [switch]$NoGui
 )
+
+#region ============================================================
+# ADMINISTRATOR-PRÜFUNG & AUTO-RESTART
+#endregion ============================================================
+
+# Prüfe, ob das Skript als Administrator läuft
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator
+)
+
+if (-not $isAdmin) {
+    Write-Host "Das Skript erfordert Administrator-Rechte. Starte neu mit erhöhten Rechten..." -ForegroundColor Yellow
+    
+    # Sammle alle übergebenen Parameter
+    $argumentList = @()
+    
+    if ($ExchangeServers) {
+        $argumentList += "-ExchangeServers @($(($ExchangeServers | ForEach-Object { "'{0}'" -f $_ }) -join ','))"
+    }
+    if ($OutputPath -ne "C:\ExchangeDoku") {
+        $argumentList += "-OutputPath '$OutputPath'"
+    }
+    if ($CompanyName -ne "Meine Organisation") {
+        $argumentList += "-CompanyName '$CompanyName'"
+    }
+    if ($OutputFormats.Count -gt 0) {
+        $argumentList += "-OutputFormats @($(($OutputFormats | ForEach-Object { "'{0}'" -f $_ }) -join ','))"
+    }
+    if ($Sections) {
+        $argumentList += "-Sections @($(($Sections | ForEach-Object { "'{0}'" -f $_ }) -join ','))"
+    }
+    if ($ShowGui) {
+        $argumentList += "-ShowGui"
+    }
+    if ($NoGui) {
+        $argumentList += "-NoGui"
+    }
+    
+    # Starte das Skript mit Administrator-Rechten
+    $scriptPath = $MyInvocation.MyCommand.Path
+    $command = "& '$scriptPath' $($argumentList -join ' ')"
+    
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"$command`"" -Verb RunAs -Wait
+    exit
+}
+
+Write-Host "Administrator-Rechte bestätigt. Skript wird ausgeführt..." -ForegroundColor Green
 
 #region ============================================================
 # VARIABLEN-DEFINITION
@@ -801,6 +878,980 @@ function Get-HardwareInformation {
     }
 
     New-HTMLSection -Title "Hardware-Informationen & Server-Details" -Content $allHardwareHTML
+}
+
+# ---------------------------------------------------------------
+# 1.5 INSTALLIERTE SOFTWARE
+# ---------------------------------------------------------------
+function Get-InstalledSoftwareInfo {
+    <#
+    .SYNOPSIS
+        Sammelt alle installierten Software-Programme pro Server über die Registry.
+        Unterstützt 32-Bit und 64-Bit Programme.
+    #>
+    Write-Log -Message "=== Sammle installierte Software ===" -Level "INFO"
+
+    $allSoftwareHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "Installierte Software für Server: $server" -Level "INFO"
+            
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+            $softwareList = @()
+
+            # Registry-Pfade für 64-Bit und 32-Bit Software
+            $regPaths = @(
+                "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                "SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+            )
+
+            try {
+                $regKey = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey(
+                    [Microsoft.Win32.RegistryHive]::LocalMachine, $server
+                )
+
+                foreach ($regPath in $regPaths) {
+                    try {
+                        $subKey = $regKey.OpenSubKey($regPath)
+                        if ($subKey) {
+                            foreach ($appGuid in $subKey.GetSubKeyNames()) {
+                                try {
+                                    $appKey = $subKey.OpenSubKey($appGuid)
+                                    if ($appKey) {
+                                        $displayName = $appKey.GetValue("DisplayName")
+                                        $displayVersion = $appKey.GetValue("DisplayVersion")
+                                        $installDate = $appKey.GetValue("InstallDate")
+                                        $publisher = $appKey.GetValue("Publisher")
+
+                                        # Nur Programme mit DisplayName auflisten (echte Software, nicht Registry-Reste)
+                                        if ($displayName) {
+                                            # InstallDate formatieren wenn vorhanden
+                                            $formattedDate = if ($installDate -and $installDate -match "^\d{8}$") {
+                                                [datetime]::ParseExact($installDate, "yyyyMMdd", $null).ToString("dd.MM.yyyy")
+                                            }
+                                            elseif ($installDate) {
+                                                $installDate
+                                            }
+                                            else {
+                                                "Unbekannt"
+                                            }
+
+                                            $softwareList += [PSCustomObject]@{
+                                                "Softwarename"     = $displayName
+                                                "Version"          = if ($displayVersion) { $displayVersion } else { "-" }
+                                                "Hersteller"       = if ($publisher) { $publisher } else { "-" }
+                                                "Installationsdatum" = $formattedDate
+                                            }
+                                        }
+                                        $appKey.Close()
+                                    }
+                                }
+                                catch {
+                                    # Fehlerhafte Einträge überspringen
+                                }
+                            }
+                            $subKey.Close()
+                        }
+                    }
+                    catch {
+                        Write-Log -Message "Registry-Pfad nicht lesbar (${regPath}): $_" -Level "WARNING"
+                    }
+                }
+
+                $regKey.Close()
+            }
+            catch {
+                Write-Log -Message "Remote Registry auf ${server} nicht erreichbar: $_" -Level "ERROR"
+                $serverHTML += "<p class='error'>Keine Verbindung zur Remote Registry möglich.</p>"
+                $allSoftwareHTML += $serverHTML
+                continue
+            }
+
+            # Software sortieren und deduplizieren
+            $softwareList = $softwareList | 
+                Sort-Object -Property "Softwarename" -Unique |
+                Select-Object -Property "Softwarename", "Version", "Hersteller", "Installationsdatum"
+
+            if ($softwareList.Count -gt 0) {
+                $serverHTML += "<p><strong>Gesamt: $($softwareList.Count) Software-Programme installiert</strong></p>"
+                $serverHTML += (ConvertTo-HTMLTable -Data $softwareList -NoDataMessage "Keine Software gefunden")
+            }
+            else {
+                $serverHTML += "<p class='no-data'>Keine Software gefunden.</p>"
+            }
+
+            $allSoftwareHTML += $serverHTML
+        }
+        catch {
+            Write-Log -Message "Fehler bei Software-Abfrage für ${server}: $_" -Level "ERROR"
+            $allSoftwareHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler bei der Abfrage: $_</p>"
+        }
+    }
+
+    New-HTMLSection -Title "Installierte Software" -Content $allSoftwareHTML
+}
+
+# ---------------------------------------------------------------
+# 1.6 NETZWERK-KONFIGURATION (NIC SPEED & PERFORMANCE)
+# ---------------------------------------------------------------
+function Get-NetworkConfigurationInfo {
+    <#
+    .SYNOPSIS
+        Prüft Netzwerk-Geschwindigkeit und Performance-Einstellungen via Get-NetAdapter.
+    #>
+    Write-Log -Message "=== Sammle Netzwerk-Konfiguration (NIC Speed) ===" -Level "INFO"
+
+    $allNetworkHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "Netzwerk-Config für Server: $server (lokaler Hostname: $env:COMPUTERNAME)" -Level "INFO"
+
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+            $nicList = @()
+            $adapters = @()
+
+            try {
+                # Prüfe ob es der lokale Server ist (case-insensitive)
+                $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
+                Write-Log -Message "isLocal=$isLocal für Server=$server" -Level "INFO"
+                
+                if ($isLocal) {
+                    # Lokal: Get-NetAdapter direkt
+                    Write-Log -Message "Versuche Get-NetAdapter lokal..." -Level "INFO"
+                    $adapters = @(Get-NetAdapter -ErrorAction Stop)
+                    Write-Log -Message "Get-NetAdapter gefunden: $($adapters.Count) Adapter" -Level "INFO"
+                } else {
+                    # Remote: Invoke-Command mit Get-NetAdapter
+                    Write-Log -Message "Versuche Get-NetAdapter via Remoting auf $server..." -Level "INFO"
+                    $adapters = @(Invoke-Command -ComputerName $server -ScriptBlock {
+                        Get-NetAdapter -ErrorAction Stop
+                    } -ErrorAction Stop)
+                    Write-Log -Message "Remoting Get-NetAdapter gefunden: $($adapters.Count) Adapter" -Level "INFO"
+                }
+                
+                # Verarbeite Adapter
+                if ($adapters -and $adapters.Count -gt 0) {
+                    Write-Log -Message "Verarbeite $($adapters.Count) Adapter..." -Level "INFO"
+                    
+                    $nicList = @()
+                    foreach ($nic in $adapters) {
+                        try {
+                            # Extrahiere Speed aus LinkSpeed
+                            $speedMatch = $null
+                            if ($nic.LinkSpeed -match '(\d+)\s*Gbps') {
+                                $speedMatch = [double]$Matches[1]
+                            }
+                            
+                            $speedStatus = if ($null -eq $speedMatch) { 
+                                "⚠️ Speed unbekannt" 
+                            }
+                            elseif ($speedMatch -ge 1) { 
+                                "✅ OK (>= 1 Gbps)" 
+                            } else { 
+                                "⚠️ WARNUNG (< 1 Gbps!)" 
+                            }
+                            
+                            $nicList += [PSCustomObject]@{
+                                "Adapter Name"      = $nic.Name
+                                "Beschreibung"      = $nic.InterfaceDescription
+                                "Status"            = $nic.Status
+                                "Link Speed"        = $nic.LinkSpeed
+                                "MAC-Adresse"       = $nic.MacAddress
+                                "Speed-Status"      = $speedStatus
+                            }
+                        }
+                        catch {
+                            Write-Log -Message "Fehler bei Adapter-Verarbeitung: $_" -Level "WARNING"
+                        }
+                    }
+                    Write-Log -Message "Erfolgreich $($nicList.Count) Adapter verarbeitet" -Level "INFO"
+                }
+                else {
+                    Write-Log -Message "Keine Adapter gefunden" -Level "WARNING"
+                }
+            }
+            catch {
+                Write-Log -Message "NIC-Abfrage für $server fehlgeschlagen: $_" -Level "ERROR"
+            }
+
+            # Ausgabe
+            if ($nicList -and @($nicList).Count -gt 0) {
+                $serverHTML += "<h4>Netzwerkadapter</h4>"
+                $serverHTML += (ConvertTo-HTMLTable -Data $nicList)
+            }
+            else {
+                $serverHTML += "<p class='no-data'>Keine Netzwerkadapter gefunden.</p>"
+            }
+
+            $allNetworkHTML += $serverHTML
+        }
+        catch {
+            Write-Log -Message "Fehler bei Netzwerk-Info für ${server}: $_" -Level "ERROR"
+            $allNetworkHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+
+    New-HTMLSection -Title "Netzwerk-Konfiguration (NIC Speed & Performance)" -Content $allNetworkHTML
+}
+
+# ---------------------------------------------------------------
+# 1.7 POWER PLAN & PERFORMANCE
+# ---------------------------------------------------------------
+function Get-PowerPlanInfo {
+    <#
+    .SYNOPSIS
+        Prüft den aktuellen Power Plan. Sollte auf "Hohe Leistung" eingestellt sein für Produktions-Exchange-Server.
+    #>
+    Write-Log -Message "=== Sammle Power Plan Informationen ===" -Level "INFO"
+
+    $allPowerHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "Power Plan für Server: $server" -Level "INFO"
+
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+            
+            # Registry: Aktuell aktiver Power Plan
+            $activePlanGuid = Get-RemoteRegistryValue -ComputerName $server -RegistryPath "SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes" -ValueName "ActivePowerScheme"
+            $activePlanName = "Unbekannt"
+            $powerStatus = "⚠️ WARNUNG"
+            
+            if ($activePlanGuid) {
+                # Bekannte GUIDs
+                $planMap = @{
+                    "381b4222-f694-41f0-9685-ff5bb260df2e" = "Höchste Leistung"
+                    "1537a863-7a1c-4bea-b8a0-5e755d1e55f0" = "Ausgewogen"
+                    "a1841308-3541-4fab-bc81-f71556f20b4a" = "Energiesparen"
+                }
+                
+                # Versuche den Namen aus Registry zu lesen
+                try {
+                    $planPath = "SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes\$activePlanGuid"
+                    $activePlanName = Get-RemoteRegistryValue -ComputerName $server -RegistryPath $planPath -ValueName "FriendlyName"
+                    if (-not $activePlanName) {
+                        $activePlanName = $planMap[$activePlanGuid] -replace "^({.*})", "" 
+                    }
+                    
+                    # Bewertung
+                    if ($activePlanName -match "Höchste Leistung|High Performance") {
+                        $powerStatus = "✅ OK - Höchste Leistung"
+                    }
+                    elseif ($activePlanName -match "Ausgewogen|Balanced") {
+                        $powerStatus = "⚠️ WARNUNG - Sollte 'Höchste Leistung' sein"
+                    }
+                }
+                catch {
+                    Write-Log -Message "Power Plan Name nicht ermittelt: $_" -Level "WARNING"
+                }
+            }
+
+            $powerInfo = [PSCustomObject]@{
+                "Aktiver Power Plan"    = $activePlanName
+                "GUID"                  = $activePlanGuid
+                "Empfohlener Status"    = "Höchste Leistung"
+                "Bewertung"             = $powerStatus
+            }
+
+            $serverHTML += "<h4>Aktuelle Power Plan Einstellung</h4>"
+            $serverHTML += (ConvertTo-HTMLTable -Data @($powerInfo))
+            $serverHTML += "<p><strong>Hinweis:</strong> Für Produktions-Exchange-Server sollte der Power Plan auf 'Höchste Leistung' oder 'High Performance' eingestellt sein.</p>"
+
+            $allPowerHTML += $serverHTML
+        }
+        catch {
+            Write-Log -Message "Fehler bei Power Plan für ${server}: $_" -Level "ERROR"
+            $allPowerHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+
+    New-HTMLSection -Title "Power Plan & Performance-Einstellungen" -Content $allPowerHTML
+}
+
+# ---------------------------------------------------------------
+# 1.8 SMBv1 STATUS (SICHERHEIT)
+# ---------------------------------------------------------------
+function Get-SMBv1StatusInfo {
+    <#
+    .SYNOPSIS
+        Prüft ob SMBv1 deaktiviert ist (Sicherheits- und Performance-Best-Practice).
+    #>
+    Write-Log -Message "=== Sammle SMBv1 Status ===" -Level "INFO"
+
+    $allSMBHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "SMBv1 Status für Server: $server" -Level "INFO"
+
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+            
+            # Prüfe ob es der lokale Server ist
+            $isLocal = ($server -eq $env:COMPUTERNAME) -or ($server -eq 'localhost') -or ($server -eq '.')
+            $smbStatus = $null
+            
+            try {
+                if ($isLocal) {
+                    # Direkt lokal prüfen mit Get-SmbServerConfiguration
+                    try {
+                        $smbConfig = Get-SmbServerConfiguration -ErrorAction SilentlyContinue
+                        if ($null -ne $smbConfig) {
+                            $smbStatus = @{
+                                EnableSMB1 = $smbConfig.EnableSMB1Protocol
+                                IsDisabled = -not $smbConfig.EnableSMB1Protocol
+                                Source = "Get-SmbServerConfiguration"
+                            }
+                        }
+                    } catch {}
+                    
+                    # Fallback Registry
+                    if ($null -eq $smbStatus) {
+                        try {
+                            $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
+                            $smb1Reg = Get-ItemProperty -Path $regPath -Name "SMB1" -ErrorAction SilentlyContinue
+                            if ($null -ne $smb1Reg) {
+                                $smbStatus = @{
+                                    SMB1Value = $smb1Reg.SMB1
+                                    IsDisabled = ($smb1Reg.SMB1 -eq 0)
+                                    Source = "Registry"
+                                }
+                            }
+                        } catch {}
+                    }
+                } else {
+                    # Remoting für entfernte Server
+                    $smbStatus = Invoke-Command -ComputerName $server -ScriptBlock {
+                        # Methode 1: Get-SmbServerConfiguration
+                        try {
+                            $smbConfig = Get-SmbServerConfiguration -ErrorAction SilentlyContinue
+                            if ($null -ne $smbConfig) {
+                                return @{
+                                    EnableSMB1 = $smbConfig.EnableSMB1Protocol
+                                    IsDisabled = -not $smbConfig.EnableSMB1Protocol
+                                    Source = "Get-SmbServerConfiguration"
+                                }
+                            }
+                        } catch {}
+                        
+                        # Methode 2: Registry Fallback
+                        try {
+                            $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
+                            $smb1Reg = Get-ItemProperty -Path $regPath -Name "SMB1" -ErrorAction SilentlyContinue
+                            if ($null -ne $smb1Reg) {
+                                return @{
+                                    SMB1Value = $smb1Reg.SMB1
+                                    IsDisabled = ($smb1Reg.SMB1 -eq 0)
+                                    Source = "Registry"
+                                }
+                            }
+                        } catch {}
+                        
+                        return $null
+                    } -ErrorAction SilentlyContinue
+                }
+            }
+            catch {
+                Write-Log -Message "SMBv1-Abfrage für $server fehlgeschlagen: $_" -Level "WARNING"
+            }
+
+            # Bewertung
+            if ($smbStatus) {
+                $isDisabled = $smbStatus.IsDisabled
+                
+                if ($isDisabled -eq $true) {
+                    $smbDisplay = "✅ DEAKTIVIERT (Sicher)"
+                    $statusColor = "green"
+                }
+                elseif ($isDisabled -eq $false) {
+                    $smbDisplay = "🔴 AKTIVIERT (Unsicher!)"
+                    $statusColor = "red"
+                }
+                else {
+                    $smbDisplay = "⚠️ Status konnte nicht eindeutig ermittelt werden"
+                    $statusColor = "yellow"
+                }
+                
+                $smbInfo = [PSCustomObject]@{
+                    "SMBv1 Status"          = $smbDisplay
+                    "Quelle"                = $smbStatus.Source
+                    "Sicherheitsbewertung"  = if ($isDisabled -eq $true) { "✅ SEHR GUT" } elseif ($isDisabled -eq $false) { "🔴 KRITISCH" } else { "⚠️ Unbekannt" }
+                }
+            }
+            else {
+                # Kein SMBv1 gefunden - wahrscheinlich moderne Windows Version
+                $smbInfo = [PSCustomObject]@{
+                    "SMBv1 Status"          = "ℹ️ Nicht vorhanden oder Moderne Windows-Version"
+                    "Quelle"                = "Abfrage fehlgeschlagen"
+                    "Sicherheitsbewertung"  = "✅ SEHR GUT (wahrscheinlich nicht aktiviert)"
+                }
+            }
+
+            $serverHTML += "<h4>SMBv1 Konfiguration</h4>"
+            $serverHTML += (ConvertTo-HTMLTable -Data @($smbInfo))
+            $serverHTML += "<p><strong>Best Practice:</strong> SMBv1 sollte deaktiviert sein. Dies bietet Schutz gegen WannaCry und verbessert die Performance. In modernen Windows-Versionen ist SMBv1 standardmäßig deaktiviert.</p>"
+
+            $allSMBHTML += $serverHTML
+        }
+        catch {
+            Write-Log -Message "Fehler bei SMBv1 Status für ${server}: $_" -Level "ERROR"
+            $allSMBHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>SMBv1-Status konnte nicht ermittelt werden: $_</p>"
+        }
+    }
+
+    New-HTMLSection -Title "SMBv1 Status (Sicherheit & Performance)" -Content $allSMBHTML
+}
+
+# ---------------------------------------------------------------
+# 1.9 DAG REPLICATION HEALTH
+# ---------------------------------------------------------------
+function Get-DAGReplicationHealthInfo {
+    <#
+    .SYNOPSIS
+        Prüft DAG Replication Health (nur wenn DAG konfiguriert ist).
+    #>
+    Write-Log -Message "=== Sammle DAG Replication Health ===" -Level "INFO"
+
+    $dagHTML = ""
+
+    try {
+        # Prüfe ob DAGs in der Organisation vorhanden sind
+        $dags = Get-DatabaseAvailabilityGroup -ErrorAction SilentlyContinue
+        
+        if (-not $dags -or $dags.Count -eq 0) {
+            Write-Log -Message "Keine DAG(s) in der Organisation konfiguriert" -Level "INFO"
+            $dagHTML = "<p class='no-data'>Keine Database Availability Groups in dieser Organisation konfiguriert.</p>"
+            New-HTMLSection -Title "DAG Replication Health" -Content $dagHTML
+            return
+        }
+
+        Write-Log -Message "Gefundene DAGs: $($dags.Count)" -Level "INFO"
+
+        foreach ($dag in $dags) {
+            try {
+                $dagName = $dag.Name
+                Write-Log -Message "Prüfe DAG: $dagName" -Level "INFO"
+
+                $serverHTML = "<h3>DAG: $dagName</h3>"
+                
+                # DAG Status
+                $dagInfo = [PSCustomObject]@{
+                    "DAG Name"                  = $dag.Name
+                    "Member Count"              = $dag.MemberServers.Count
+                    "Witness Server"            = $dag.WitnessServer
+                    "Witness Dir"               = $dag.WitnessDirectory
+                    "Replication Port"          = $dag.ReplicationPort
+                }
+                
+                $serverHTML += "<h4>DAG Informationen</h4>"
+                $serverHTML += (ConvertTo-HTMLTable -Data @($dagInfo))
+
+                # Replication Health pro Server
+                try {
+                    $repHealth = Get-MailboxDatabaseCopyStatus -ErrorAction SilentlyContinue | 
+                        Where-Object { $_.DatabaseName -like "*" } |
+                        Select-Object -Property ServerName, DatabaseName, Status, ReplayQueueLength, CopyQueueLength, ContentIndexState |
+                        Sort-Object DatabaseName
+                    
+                    if ($repHealth) {
+                        $repHealthFormatted = foreach ($rep in $repHealth) {
+                            $statusIcon = switch ($rep.Status) {
+                                "Healthy" { "✅ Healthy" }
+                                "Failed" { "🔴 Failed" }
+                                "Suspended" { "⚠️ Suspended" }
+                                "Seeding" { "🔵 Seeding" }
+                                default { $rep.Status }
+                            }
+                            
+                            [PSCustomObject]@{
+                                "Server"              = $rep.ServerName
+                                "Database"            = $rep.DatabaseName
+                                "Status"              = $statusIcon
+                                "ReplayQueue"         = $rep.ReplayQueueLength
+                                "CopyQueue"           = $rep.CopyQueueLength
+                                "ContentIndexStatus"  = $rep.ContentIndexState
+                            }
+                        }
+                        
+                        $serverHTML += "<h4>Datenbank-Kopien Status</h4>"
+                        $serverHTML += (ConvertTo-HTMLTable -Data $repHealthFormatted)
+                    }
+                }
+                catch {
+                    Write-Log -Message "Fehler beim Abrufen der Replication Health: $_" -Level "WARNING"
+                    $serverHTML += "<p class='error'>Replication Health konnte nicht abgerufen werden: $_</p>"
+                }
+
+                $dagHTML += $serverHTML
+            }
+            catch {
+                Write-Log -Message "Fehler bei DAG $($dag.Name): $_" -Level "ERROR"
+                $dagHTML += "<h3>DAG: $($dag.Name)</h3><p class='error'>Fehler: $_</p>"
+            }
+        }
+    }
+    catch {
+        Write-Log -Message "Fehler bei DAG-Abfrage: $_" -Level "WARNING"
+        $dagHTML = "<p class='error'>DAG-Informationen konnten nicht abgerufen werden: $_</p>"
+    }
+
+    if ($dagHTML) {
+        New-HTMLSection -Title "DAG Replication Health" -Content $dagHTML
+    }
+}
+
+# ---------------------------------------------------------------
+# 1.10 PROCESSOR CORE CHECK (MIT DC:EXCHANGE RATIO)
+# ---------------------------------------------------------------
+function Get-ProcessorCoreAnalysis {
+    <#
+    .SYNOPSIS
+        Prüft Anzahl der Prozessor-Kerne und berechnet DC:Exchange Ratio.
+        Exchange empfiehlt mindestens 4 Kerne.
+    #>
+    Write-Log -Message "=== Sammle Processor Core Information ===" -Level "INFO"
+
+    $coreHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "Processor Cores für Server: $server" -Level "INFO"
+
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+            
+            try {
+                $cimSession = New-ServerCimSession -ComputerName $server
+                if ($cimSession) {
+                    $processorInfo = Get-CimInstance -CimSession $cimSession -ClassName Win32_Processor -ErrorAction Stop
+                    
+                    $totalCores = 0
+                    $totalLogicalProcessors = 0
+                    $processorData = @()
+                    
+                    foreach ($proc in $processorInfo) {
+                        $totalCores += $proc.NumberOfCores
+                        $totalLogicalProcessors += $proc.NumberOfLogicalProcessors
+                        
+                        $processorData += [PSCustomObject]@{
+                            "Prozessor"        = $proc.Name
+                            "Physische Kerne"  = $proc.NumberOfCores
+                            "Logische Prozesse" = $proc.NumberOfLogicalProcessors
+                            "Hyperthreading"   = if ($proc.NumberOfLogicalProcessors -gt $proc.NumberOfCores) { "Aktiviert" } else { "Deaktiviert" }
+                        }
+                    }
+                    
+                    # Bewertung
+                    $coreStatus = if ($totalCores -ge 4) { "✅ OK (>= 4 Kerne)" } else { "🔴 WARNUNG (< 4 Kerne!)" }
+                    $coreRecommendation = "Exchange empfiehlt mindestens 4 physische Kerne für optimale Performance."
+                    
+                    $serverHTML += "<h4>Prozessor-Übersicht</h4>"
+                    $serverHTML += (ConvertTo-HTMLTable -Data @([PSCustomObject]@{
+                        "Gesamt Physische Kerne" = $totalCores
+                        "Gesamt Logische Prozesse" = $totalLogicalProcessors
+                        "Bewertung" = $coreStatus
+                    }))
+                    
+                    $serverHTML += "<h4>Prozessor Details</h4>"
+                    $serverHTML += (ConvertTo-HTMLTable -Data $processorData)
+                    $serverHTML += "<p><strong>Hinweis:</strong> $coreRecommendation</p>"
+                    
+                    Remove-CimSession -CimSession $cimSession -ErrorAction SilentlyContinue
+                }
+            }
+            catch {
+                Write-Log -Message "Processor-Abfrage fehlgeschlagen für ${server}: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>Processor-Informationen konnten nicht abgerufen werden: $_</p>"
+            }
+
+            $coreHTML += $serverHTML
+        }
+        catch {
+            Write-Log -Message "Fehler bei Processor Core Analysis für ${server}: $_" -Level "ERROR"
+            $coreHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+
+    New-HTMLSection -Title "Processor Core Analyse" -Content $coreHTML
+}
+
+# ---------------------------------------------------------------
+# 1.11 RAM REQUIREMENTS CHECK
+# ---------------------------------------------------------------
+function Get-RAMRequirementsInfo {
+    <#
+    .SYNOPSIS
+        Prüft ob die RAM-Anforderungen für Exchange erfüllt sind.
+        Exchange 2019: mindestens 64GB
+        Exchange SE: mindestens 128GB empfohlen
+    #>
+    Write-Log -Message "=== Sammle RAM Requirements Information ===" -Level "INFO"
+
+    $ramHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "RAM-Check für Server: $server" -Level "INFO"
+
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+            
+            try {
+                $cimSession = New-ServerCimSession -ComputerName $server
+                if ($cimSession) {
+                    $osInfo = Get-CimInstance -CimSession $cimSession -ClassName Win32_OperatingSystem -ErrorAction Stop
+                    $ramGB = [math]::Round($osInfo.TotalVisibleMemorySize / 1MB, 2)
+                    
+                    # Bestimme die Exchange Edition (wurde bereits in Get-ExchangeEdition bestimmt)
+                    $minRAM = if ($script:ExchangeEdition -eq "SE") { 128 } else { 64 }
+                    $recommendedRAM = if ($script:ExchangeEdition -eq "SE") { 256 } else { 128 }
+                    
+                    # Bewertung
+                    $ramStatus = if ($ramGB -ge $recommendedRAM) {
+                        "✅ SEHR GUT (empfohlenes Minimum erreicht)"
+                    }
+                    elseif ($ramGB -ge $minRAM) {
+                        "🟡 OK (Minimum erfüllt, aber nicht optimal)"
+                    }
+                    else {
+                        "🔴 KRITISCH (unter Minimum!)"
+                    }
+                    
+                    $ramInfo = [PSCustomObject]@{
+                        "Exchange Edition"        = $script:ExchangeEdition
+                        "Installierte RAM (GB)"   = $ramGB
+                        "Minimum erforderlich"    = "$minRAM GB"
+                        "Empfohlen"               = "$recommendedRAM GB"
+                        "Bewertung"               = $ramStatus
+                    }
+                    
+                    $serverHTML += "<h4>RAM Anforderungen</h4>"
+                    $serverHTML += (ConvertTo-HTMLTable -Data @($ramInfo))
+                    
+                    if ($script:ExchangeEdition -eq "SE") {
+                        $serverHTML += "<p><strong>Hinweis:</strong> Exchange SE empfiehlt mindestens 128GB RAM für optimale Performance. 256GB sind recommended.</p>"
+                    }
+                    else {
+                        $serverHTML += "<p><strong>Hinweis:</strong> Exchange 2019 benötigt mindestens 64GB RAM. 128GB werden empfohlen.</p>"
+                    }
+                    
+                    Remove-CimSession -CimSession $cimSession -ErrorAction SilentlyContinue
+                }
+            }
+            catch {
+                Write-Log -Message "RAM-Abfrage fehlgeschlagen für ${server}: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>RAM-Informationen konnten nicht abgerufen werden: $_</p>"
+            }
+
+            $ramHTML += $serverHTML
+        }
+        catch {
+            Write-Log -Message "Fehler bei RAM Requirements für ${server}: $_" -Level "ERROR"
+            $ramHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+
+    New-HTMLSection -Title "RAM Requirements Check" -Content $ramHTML
+}
+
+# ---------------------------------------------------------------
+# 1.12 CERTIFICATE EXPIRATION CHECK
+# ---------------------------------------------------------------
+function Get-CertificateExpirationInfo {
+    <#
+    .SYNOPSIS
+        Prüft alle Exchange Zertifikate und deren Ablaufdatum.
+        Warnt wenn Ablauf < 30 Tage bevorsteht.
+    #>
+    Write-Log -Message "=== Sammle Certificate Expiration Information ===" -Level "INFO"
+
+    $certHTML = ""
+
+    try {
+        $certs = Get-ExchangeCertificate -ErrorAction SilentlyContinue | 
+                 Sort-Object NotAfter
+        
+        if ($certs) {
+            $today = Get-Date
+            $certData = @()
+            
+            foreach ($cert in $certs) {
+                $daysUntilExpiry = ($cert.NotAfter - $today).Days
+                
+                # Bewertung
+                if ($daysUntilExpiry -lt 0) {
+                    $certStatus = "🔴 ABGELAUFEN"
+                }
+                elseif ($daysUntilExpiry -le 7) {
+                    $certStatus = "🔴 KRITISCH (< 7 Tage)"
+                }
+                elseif ($daysUntilExpiry -le 30) {
+                    $certStatus = "🟡 WARNUNG (< 30 Tage)"
+                }
+                elseif ($daysUntilExpiry -le 90) {
+                    $certStatus = "🟠 BALD ABLAUFEN (< 90 Tage)"
+                }
+                else {
+                    $certStatus = "✅ OK"
+                }
+                
+                $certData += [PSCustomObject]@{
+                    "Fingerabdruck"      = $cert.Thumbprint.Substring(0, 10) + "..."
+                    "Subject"            = $cert.Subject
+                    "Issuer"             = $cert.Issuer
+                    "Nicht nach"         = $cert.NotAfter.ToString("dd.MM.yyyy")
+                    "Tage bis Ablauf"    = $daysUntilExpiry
+                    "Status"             = $certStatus
+                }
+            }
+            
+            $certHTML = "<h3>Exchange Zertifikate</h3>"
+            $certHTML += (ConvertTo-HTMLTable -Data $certData)
+            $certHTML += "<p><strong>Hinweis:</strong> Zertifikate sollten rechtzeitig erneuert werden. Ein Ablauf führt zu Service-Unterbrechungen!</p>"
+        }
+        else {
+            $certHTML = "<p class='no-data'>Keine Exchange Zertifikate gefunden.</p>"
+        }
+    }
+    catch {
+        Write-Log -Message "Certificate-Abfrage fehlgeschlagen: $_" -Level "WARNING"
+        $certHTML = "<p class='error'>Zertifikate konnten nicht abgerufen werden: $_</p>"
+    }
+
+    New-HTMLSection -Title "Certificate Expiration Status" -Content $certHTML
+}
+
+# ---------------------------------------------------------------
+# 1.13 IIS APPLICATION POOL SETTINGS
+# ---------------------------------------------------------------
+function Get-IISAppPoolSettingsInfo {
+    <#
+    .SYNOPSIS
+        Prüft IIS Application Pool Recycling über ApplicationHost.config XML (zuverlässiger als AppCmd-Parsing).
+    #>
+    Write-Log -Message "=== Sammle IIS Application Pool Settings ===" -Level "INFO"
+
+    $iisHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "IIS AppPool Settings für Server: $server" -Level "INFO"
+
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+            $appPools = @()
+            
+            try {
+                $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
+                
+                # Scriptblock: Lese ApplicationHost.config XML direkt
+                $getPoolsScript = {
+                    param($ComputerName)
+                    
+                    $pools = @()
+                    $configPath = "$env:windir\System32\inetsrv\config\applicationHost.config"
+                    
+                    try {
+                        if (Test-Path $configPath) {
+                            [xml]$config = Get-Content $configPath -ErrorAction Stop
+                            
+                            # Navigiere zu den AppPool <add> Elementen
+                            $appPoolParent = $config.configuration.'system.applicationHost'.applicationPools
+                            
+                            if ($appPoolParent) {
+                                # Zugriff auf alle <add> Kinder-Elemente
+                                foreach ($poolElement in $appPoolParent.add) {
+                                    if ($poolElement.name) {
+                                        $poolName = $poolElement.name
+                                        $autoStart = if ($poolElement.autoStart -eq "true") { $true } else { $false }
+                                        
+                                        # recycling.periodicRestart.time
+                                        $recycleTime = $null
+                                        if ($poolElement.recycling -and $poolElement.recycling.periodicRestart) {
+                                            $recycleTime = $poolElement.recycling.periodicRestart.time
+                                        }
+                                        
+                                        # processModel.idleTimeout
+                                        $idleTimeout = $null
+                                        if ($poolElement.processModel -and $poolElement.processModel.idleTimeout) {
+                                            $idleTimeout = $poolElement.processModel.idleTimeout
+                                        }
+                                        
+                                        $pools += [PSCustomObject]@{
+                                            Name = $poolName
+                                            RecycleTime = $recycleTime
+                                            IdleTimeout = $idleTimeout
+                                            AutoStart = $autoStart
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch {
+                        Write-Host "Fehler beim Lesen von ApplicationHost.config: $_" -ForegroundColor Red
+                    }
+                    
+                    return $pools
+                }
+                
+                # Führe aus - lokal oder remote
+                if ($isLocal) {
+                    Write-Log -Message "IIS AppPool lokal aus ApplicationHost.config auslesen..." -Level "INFO"
+                    $appPools = @(& $getPoolsScript $env:COMPUTERNAME)
+                }
+                else {
+                    Write-Log -Message "IIS AppPool remote von $server auslesen..." -Level "INFO"
+                    $appPools = @(Invoke-Command -ComputerName $server -ScriptBlock $getPoolsScript -ArgumentList $server -ErrorAction Stop)
+                }
+                
+                Write-Log -Message "AppPools gefunden: $($appPools.Count)" -Level "INFO"
+            }
+            catch {
+                Write-Log -Message "AppPool Abfrage für $server fehlgeschlagen: $_" -Level "WARNING"
+            }
+
+            if ($appPools -and @($appPools).Count -gt 0) {
+                $poolData = @()
+                foreach ($pool in $appPools) {
+                    # Format RecycleTime
+                    $recycleDisplay = if ($pool.RecycleTime -and $pool.RecycleTime -ne "00:00:00") {
+                        $pool.RecycleTime -as [string]
+                    }
+                    else {
+                        "-"
+                    }
+                    
+                    $isExchangePool = $pool.Name -like "MSExchange*"
+                    $recycleStatus = if ($recycleDisplay -ne "-") {
+                        "✅ Konfiguriert ($recycleDisplay)"
+                    }
+                    elseif ($isExchangePool) {
+                        "🟠 WARNUNG (Keine Recycling)"
+                    }
+                    else {
+                        "ℹ️ Standard (Keine Recycling)"
+                    }
+                    
+                    $poolData += [PSCustomObject]@{
+                        "App Pool Name"    = $pool.Name
+                        "Recycling"        = $recycleDisplay
+                        "Idle Timeout"     = $pool.IdleTimeout
+                        "AutoStart"        = $pool.AutoStart
+                        "Status"           = $recycleStatus
+                    }
+                }
+                
+                $serverHTML += "<h4>IIS Application Pools</h4>"
+                $serverHTML += (ConvertTo-HTMLTable -Data $poolData)
+                $serverHTML += "<p><strong>Best Practice:</strong> Exchange Pools sollten Zeit-basierte Recycling haben (z.B. 4h, 14h). Pools ohne Recycling-Zeit nutzen Memory-basierte oder Event-basierte Recycling.</p>"
+            }
+            else {
+                $serverHTML += "<p class='no-data'>Keine App Pools gefunden oder IIS nicht konfiguriert.</p>"
+            }
+
+            $iisHTML += $serverHTML
+        }
+        catch {
+            Write-Log -Message "Fehler bei IIS Settings für ${server}: $_" -Level "ERROR"
+            $iisHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+
+    New-HTMLSection -Title "IIS Application Pool Konfiguration" -Content $iisHTML
+}
+
+# ---------------------------------------------------------------
+# 1.14 EXCHANGE SERVICE STATUS
+# ---------------------------------------------------------------
+function Get-ExchangeServiceStatusInfo {
+    <#
+    .SYNOPSIS
+        Prüft Status aller wichtigen Exchange Services.
+    #>
+    Write-Log -Message "=== Sammle Exchange Service Status ===" -Level "INFO"
+
+    $serviceHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "Exchange Services für Server: $server" -Level "INFO"
+
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+            
+            try {
+                # Wichtige Exchange Services
+                $criticalServices = @(
+                    "MSExchangeServiceHost",
+                    "MSExchangeIS",
+                    "MSExchangeADTopology",
+                    "MSExchangeMailboxTransport",
+                    "MSExchangeTransport",
+                    "MSExchangeImap4",
+                    "MSExchangePop3",
+                    "MSExchangeRepl",
+                    "MSExchangeRPC",
+                    "MSExchangeIMAP4BE"
+                )
+                
+                $cimSession = New-ServerCimSession -ComputerName $server
+                if ($cimSession) {
+                    $services = Get-CimInstance -CimSession $cimSession -ClassName Win32_Service `
+                        -Filter "Name LIKE 'MSExchange%'" -ErrorAction Stop
+                    
+                    $serviceData = @()
+                    $criticalDown = 0
+                    
+                    foreach ($svc in $services | Sort-Object Name) {
+                        $isCritical = $svc.Name -in $criticalServices
+                        
+                        $svcStatus = if ($svc.State -eq "Running") { 
+                            "✅ Running" 
+                        }
+                        elseif ($isCritical) {
+                            "🔴 KRITISCH GESTOPPT"
+                            $criticalDown++
+                        }
+                        else {
+                            "⚠️ Gestoppt"
+                        }
+                        
+                        $svcStartType = if ($svc.StartMode -eq "Auto") { "Auto (erforderlich)" } else { $svc.StartMode }
+                        
+                        $serviceData += [PSCustomObject]@{
+                            "Service Name"    = $svc.Name
+                            "Anzeige Name"    = $svc.DisplayName
+                            "Status"          = $svcStatus
+                            "Starttyp"        = $svcStartType
+                            "Kritisch"        = if ($isCritical) { "Ja" } else { "Nein" }
+                        }
+                    }
+                    
+                    $serverHTML += "<h4>Exchange Services</h4>"
+                    $serverHTML += (ConvertTo-HTMLTable -Data $serviceData)
+                    
+                    if ($criticalDown -gt 0) {
+                        $serverHTML += "<p class='error'><strong>WARNUNG:</strong> $criticalDown kritische Service(s) sind gestoppt!</p>"
+                    }
+                    else {
+                        $serverHTML += "<p><strong>Status:</strong> ✅ Alle kritischen Services sind aktiv.</p>"
+                    }
+                    
+                    Remove-CimSession -CimSession $cimSession -ErrorAction SilentlyContinue
+                }
+            }
+            catch {
+                Write-Log -Message "Service-Abfrage fehlgeschlagen für ${server}: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>Service-Informationen konnten nicht abgerufen werden: $_</p>"
+            }
+
+            $serviceHTML += $serverHTML
+        }
+        catch {
+            Write-Log -Message "Fehler bei Exchange Service Status für ${server}: $_" -Level "ERROR"
+            $serviceHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+
+    New-HTMLSection -Title "Exchange Service Status" -Content $serviceHTML
 }
 
 # ---------------------------------------------------------------
@@ -3003,6 +4054,424 @@ function Get-LicensingInfo {
 }
 
 # ---------------------------------------------------------------
+# 2.1 DISK SPACE CHECK (DB / LOGS / TEMP)
+# ---------------------------------------------------------------
+function Get-DiskSpaceInfo {
+    <#
+    .SYNOPSIS
+        Prüft verfügbaren Speicherplatz auf kritischen Exchange-Laufwerken.
+        Warnt wenn < 30% verfügbar.
+    #>
+    Write-Log -Message "=== Sammle Disk Space Information ===" -Level "INFO"
+
+    $diskHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "Disk Space für Server: $server" -Level "INFO"
+
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+            $diskList = @()
+
+            try {
+                $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
+                
+                if ($isLocal) {
+                    $drives = Get-Volume -ErrorAction SilentlyContinue
+                } else {
+                    $drives = Invoke-Command -ComputerName $server -ScriptBlock {
+                        Get-Volume -ErrorAction SilentlyContinue
+                    } -ErrorAction SilentlyContinue
+                }
+
+                if ($drives) {
+                    foreach ($drive in $drives) {
+                        if ($drive.Size -gt 0) {
+                            $usedPercent = [math]::Round(($drive.Size - $drive.SizeRemaining) / $drive.Size * 100, 1)
+                            $freePercent = 100 - $usedPercent
+                            $sizeGB = [math]::Round($drive.Size / 1GB, 2)
+                            $freeGB = [math]::Round($drive.SizeRemaining / 1GB, 2)
+                            
+                            $status = if ($freePercent -lt 10) { 
+                                "🔴 KRITISCH (< 10%)" 
+                            }
+                            elseif ($freePercent -lt 30) { 
+                                "🟠 WARNUNG (< 30%)" 
+                            }
+                            elseif ($freePercent -lt 50) {
+                                "🟡 HINWEIS (< 50%)"
+                            }
+                            else { 
+                                "✅ OK" 
+                            }
+                            
+                            $diskList += [PSCustomObject]@{
+                                "Laufwerk"        = $drive.DriveLetter
+                                "Beschreibung"    = $drive.FileSystemLabel
+                                "Gesamt (GB)"     = $sizeGB
+                                "Frei (GB)"       = $freeGB
+                                "Frei (%)"        = "$freePercent %"
+                                "Status"          = $status
+                            }
+                        }
+                    }
+                }
+            }
+            catch {
+                Write-Log -Message "Disk-Abfrage für $server fehlgeschlagen: $_" -Level "WARNING"
+            }
+
+            if ($diskList -and @($diskList).Count -gt 0) {
+                $serverHTML += "<h4>Festplatten-Auslastung</h4>"
+                $serverHTML += (ConvertTo-HTMLTable -Data $diskList)
+                $serverHTML += "<p><strong>Best Practice:</strong> Exchange empfiehlt mindestens 30% freien Speicher auf DB- und Log-Laufwerken.</p>"
+            }
+            else {
+                $serverHTML += "<p class='no-data'>Disk Space Information nicht verfügbar.</p>"
+            }
+
+            $diskHTML += $serverHTML
+        }
+        catch {
+            Write-Log -Message "Fehler bei Disk Space Info für ${server}: $_" -Level "ERROR"
+            $diskHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+
+    New-HTMLSection -Title "Disk Space (DB/Logs/Temp)" -Content $diskHTML
+}
+
+# ---------------------------------------------------------------
+# 2.2 LDAP CONNECTIVITY CHECK
+# ---------------------------------------------------------------
+function Get-LDAPConnectivityInfo {
+    <#
+    .SYNOPSIS
+        Prüft ob Domain Controller (LDAP) erreichbar ist.
+        Basis für Exchange-Funktionalität.
+    #>
+    Write-Log -Message "=== Sammle LDAP Connectivity Information ===" -Level "INFO"
+
+    $ldapHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "LDAP Connectivity für Server: $server" -Level "INFO"
+
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+            
+            try {
+                $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
+                
+                if ($isLocal) {
+                    # Lokal: Nutze [ADSI]
+                    $rootDSE = [ADSI]"LDAP://RootDSE"
+                    $dcName = $rootDSE.Properties["dnsHostName"][0]
+                    $dcAvailable = "✅ OK"
+                } else {
+                    # Remote: Test über Remoting
+                    $dcTest = Invoke-Command -ComputerName $server -ScriptBlock {
+                        try {
+                            $rootDSE = [ADSI]"LDAP://RootDSE"
+                            return @{ 
+                                DC = $rootDSE.Properties["dnsHostName"][0]
+                                Available = "✅ OK"
+                            }
+                        }
+                        catch {
+                            return @{ 
+                                DC = "Nicht erreichbar"
+                                Available = "🔴 FEHLER: $_"
+                            }
+                        }
+                    } -ErrorAction SilentlyContinue
+                    
+                    $dcName = $dcTest.DC
+                    $dcAvailable = $dcTest.Available
+                }
+
+                $ldapInfo = [PSCustomObject]@{
+                    "Domain Controller"  = $dcName
+                    "LDAP Verbindung"    = $dcAvailable
+                    "Status"             = if ($dcAvailable -like "*✅*") { "✅ OK - AD erreichbar" } else { "🔴 FEHLER - AD nicht erreichbar" }
+                }
+
+                $serverHTML += (ConvertTo-HTMLTable -Data @($ldapInfo))
+                $serverHTML += "<p><strong>Hinweis:</strong> Exchange benötigt aktive LDAP-Verbindung zu Active Directory (LDAP Port 389/636). Ohne AD funktioniert Exchange nicht.</p>"
+            }
+            catch {
+                Write-Log -Message "LDAP-Test für $server fehlgeschlagen: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>LDAP-Verbindung konnte nicht getestet werden: $_</p>"
+            }
+
+            $ldapHTML += $serverHTML
+        }
+        catch {
+            Write-Log -Message "Fehler bei LDAP Info für ${server}: $_" -Level "ERROR"
+            $ldapHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+
+    New-HTMLSection -Title "LDAP Konnektivität (Domain Controller)" -Content $ldapHTML
+}
+
+# ---------------------------------------------------------------
+# 2.3 RPC PORT 135 CHECK
+# ---------------------------------------------------------------
+function Get-RPCPortStatusInfo {
+    <#
+    .SYNOPSIS
+        Prüft ob RPC Port 135 aktiv ist (TCP und UDP).
+        Notwendig für Exchange Remote Procedure Call.
+    #>
+    Write-Log -Message "=== Sammle RPC Port Status ===" -Level "INFO"
+
+    $rpcHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "RPC Port für Server: $server" -Level "INFO"
+
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+            
+            try {
+                $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
+                
+                if ($isLocal) {
+                    # Lokal: Prüfe RPC Endpoint Mapper
+                    $rpcStatus = Get-Service -Name RpcSs -ErrorAction SilentlyContinue
+                    $rpcEndpoint = Test-NetConnection -ComputerName localhost -Port 135 -ErrorAction SilentlyContinue
+                } else {
+                    # Remote: Test RPC Port
+                    $rpcTest = Invoke-Command -ComputerName $server -ScriptBlock {
+                        $rpcStatus = Get-Service -Name RpcSs -ErrorAction SilentlyContinue
+                        $rpcEndpoint = Test-NetConnection -ComputerName localhost -Port 135 -ErrorAction SilentlyContinue
+                        return @{
+                            Service = $rpcStatus
+                            Test = $rpcEndpoint
+                        }
+                    } -ErrorAction SilentlyContinue
+                    
+                    $rpcStatus = $rpcTest.Service
+                    $rpcEndpoint = $rpcTest.Test
+                }
+
+                $rpcServiceStatus = if ($rpcStatus.Status -eq "Running") { "✅ Läuft" } else { "🔴 Nicht aktiv" }
+                $rpcPortStatus = if ($rpcEndpoint.TcpTestSucceeded) { "✅ Erreichbar" } else { "⚠️ Test fehlgeschlagen" }
+
+                $rpcInfo = [PSCustomObject]@{
+                    "RPC Service (RpcSs)"  = $rpcServiceStatus
+                    "Port 135 (TCP/UDP)"   = $rpcPortStatus
+                    "Status"               = if ($rpcServiceStatus -like "*✅*" -and $rpcPortStatus -like "*✅*") { "✅ OK" } else { "🔴 FEHLER" }
+                }
+
+                $serverHTML += (ConvertTo-HTMLTable -Data @($rpcInfo))
+                $serverHTML += "<p><strong>Hinweis:</strong> RPC Port 135 (TCP/UDP) wird für Exchange-Verwaltung und Cluster-Kommunikation benötigt. Service muss laufen.</p>"
+            }
+            catch {
+                Write-Log -Message "RPC-Test für $server fehlgeschlagen: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>RPC-Status konnte nicht ermittelt werden: $_</p>"
+            }
+
+            $rpcHTML += $serverHTML
+        }
+        catch {
+            Write-Log -Message "Fehler bei RPC Info für ${server}: $_" -Level "ERROR"
+            $rpcHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+
+    New-HTMLSection -Title "RPC Port 135 Status" -Content $rpcHTML
+}
+
+# ---------------------------------------------------------------
+# 2.4 MAPI CONNECTIVITY CHECK
+# ---------------------------------------------------------------
+function Get-MAPIConnectivityInfo {
+    <#
+    .SYNOPSIS
+        Prüft MAPI-Endpunkte und Konnektivität (Outlook).
+        Exchange 2019 unterstützt nur MAPI über HTTP (modern).
+    #>
+    Write-Log -Message "=== Sammle MAPI Connectivity Information ===" -Level "INFO"
+
+    $mapiHTML = ""
+
+    try {
+        # MAPI Information (Org-weit)
+        $mapiOrg = [PSCustomObject]@{
+            "MAPI über HTTP"      = "✅ Erforderlich (Standard in 2019)"
+            "Legacy MAPI"         = "❌ Nicht unterstützt (nur via HTTP)"
+            "Outlook-Versionen"   = "Outlook 2016+ oder Outlook für Mac 2016+"
+        }
+
+        $mapiHTML += "<h3>MAPI-Architektur (Organisation)</h3>"
+        $mapiHTML += (ConvertTo-HTMLTable -Data @($mapiOrg))
+
+        # Pro Server: MAPI Virtual Directory
+        foreach ($server in $ExchangeServers) {
+            try {
+                $mapiVdir = Get-MapiVirtualDirectory -Server $server -ErrorAction SilentlyContinue | Select-Object Server, InternalUrl, ExternalUrl, @{N="Status";E={"✅ OK"}}
+                
+                if ($mapiVdir) {
+                    $mapiHTML += "<h4>MAPI Virtual Directory: $server</h4>"
+                    $mapiHTML += (ConvertTo-HTMLTable -Data $mapiVdir)
+                }
+            }
+            catch {
+                Write-Log -Message "MAPI VDir Abfrage für $server fehlgeschlagen: $_" -Level "WARNING"
+            }
+        }
+
+        $mapiHTML += "<p><strong>Hinweis:</strong> MAPI/HTTP ist die modern Outlook-Verbindungsmethode. RPC-over-HTTP ist veraltet und wird nicht mehr empfohlen.</p>"
+    }
+    catch {
+        Write-Log -Message "MAPI Connectivity Abfrage fehlgeschlagen: $_" -Level "WARNING"
+        $mapiHTML += "<p class='error'>MAPI-Information nicht verfügbar: $_</p>"
+    }
+
+    New-HTMLSection -Title "MAPI Connectivity (Outlook)" -Content $mapiHTML
+}
+
+# ---------------------------------------------------------------
+# 2.5 DATABASE COPIES CHECK
+# ---------------------------------------------------------------
+function Get-DatabaseCopiesInfo {
+    <#
+    .SYNOPSIS
+        Listet alle Datenbankgesamt und deren Kopien auf.
+        Prüft Redundanz und DAG-Status.
+    #>
+    Write-Log -Message "=== Sammle Database Copies Information ===" -Level "INFO"
+
+    $dbCopyHTML = ""
+
+    try {
+        $dbList = Get-MailboxDatabase -ErrorAction SilentlyContinue
+        
+        if ($dbList) {
+            $dbCopyData = @()
+            foreach ($db in $dbList) {
+                $copies = Get-MailboxDatabaseCopyStatus -Identity $db.Identity -ErrorAction SilentlyContinue
+                foreach ($copy in $copies) {
+                    $dbCopyData += [PSCustomObject]@{
+                        "Database"        = $db.Name
+                        "Server"          = $copy.ServerName
+                        "Status"          = if ($copy.Status -eq "Healthy") { "✅ Healthy" } else { "🔴 $($copy.Status)" }
+                        "Content Index"   = if ($copy.ContentIndexStatus -eq "Healthy") { "✅ OK" } else { "🟠 $($copy.ContentIndexStatus)" }
+                        "Replay Lag (ms)" = $copy.ReplayLagTime.TotalMilliseconds
+                        "Truncation Lag"  = $copy.TruncationLagTime
+                    }
+                }
+            }
+
+            if ($dbCopyData) {
+                $dbCopyHTML += "<h3>Datenbankgesamt und Kopien</h3>"
+                $dbCopyHTML += (ConvertTo-HTMLTable -Data $dbCopyData)
+            }
+        }
+    }
+    catch {
+        Write-Log -Message "Database Copies Abfrage fehlgeschlagen: $_" -Level "WARNING"
+        $dbCopyHTML += "<p class='error'>Database Copies nicht verfügbar: $_</p>"
+    }
+
+    $dbCopyHTML += "<p><strong>Hinweis:</strong> In einer DAG sollten kritische Datenbanken mehrere Kopien haben.</p>"
+    New-HTMLSection -Title "Database Copies & Redundanz" -Content $dbCopyHTML
+}
+
+# ---------------------------------------------------------------
+# 2.6 ANTIVIRUS EXCLUSIONS CHECK
+# ---------------------------------------------------------------
+function Get-AntivirusExclusionsInfo {
+    <#
+    .SYNOPSIS
+        Prüft ob empfohlene Exchange-Pfade von AV ausgenommen sind.
+        Häufiger Grund für Performance-Issues.
+    #>
+    Write-Log -Message "=== Sammle Antivirus Exclusions Information ===" -Level "INFO"
+
+    $avHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "Antivirus Exclusions für Server: $server" -Level "INFO"
+
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+            
+            # Empfohlene Ausschlussmuster
+            $recommendedExclusions = @(
+                "C:\Program Files\Microsoft\Exchange Server\*\Bin\*",
+                "C:\Program Files\Microsoft\Exchange Server\*\TransportRoles\*",
+                "C:\Program Files\Microsoft\Exchange Server\*\EdgeTransportRoles\*",
+                "C:\ExchangeData\*",
+                "C:\Program Files\Microsoft\Exchange Server\*\Mailbox\*\MDBTEMP*",
+                "C:\inetpub\logs\logfiles\*"
+            )
+
+            try {
+                $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
+                
+                if ($isLocal) {
+                    $winDefender = Get-MpPreference -ErrorAction SilentlyContinue
+                    $exclusions = $winDefender.ExclusionPath
+                } else {
+                    $exclTest = Invoke-Command -ComputerName $server -ScriptBlock {
+                        $winDefender = Get-MpPreference -ErrorAction SilentlyContinue
+                        return $winDefender.ExclusionPath
+                    } -ErrorAction SilentlyContinue
+                    
+                    $exclusions = $exclTest
+                }
+
+                if ($exclusions -and $exclusions.Count -gt 0) {
+                    $avHTML += "<h4>Konfigurierte Ausschlüsse</h4>"
+                    $avHTML += "<ul>"
+                    foreach ($excl in $exclusions) {
+                        $avHTML += "<li>$excl</li>"
+                    }
+                    $avHTML += "</ul>"
+                    
+                    # Prüfe ob empfohlene dabei sind
+                    $missingExclusions = @()
+                    foreach ($rec in $recommendedExclusions) {
+                        if (-not ($exclusions -like $rec)) {
+                            $missingExclusions += $rec
+                        }
+                    }
+                    
+                    if ($missingExclusions.Count -gt 0) {
+                        $avHTML += "<h4>⚠️ Fehlende empfohlene Ausschlüsse:</h4>"
+                        $avHTML += "<ul style='color: orange;'>"
+                        foreach ($miss in $missingExclusions) {
+                            $avHTML += "<li>$miss</li>"
+                        }
+                        $avHTML += "</ul>"
+                    }
+                }
+                else {
+                    $avHTML += "<p class='warning'>Keine Antivirus-Ausschlüsse konfiguriert oder Windows Defender nicht verfügbar.</p>"
+                }
+            }
+            catch {
+                Write-Log -Message "AV-Exclusion Check für $server fehlgeschlagen: $_" -Level "WARNING"
+                $avHTML += "<p class='error'>Antivirus-Exclusions konnten nicht gelesen werden: $_</p>"
+            }
+
+            $avHTML += "<p><strong>Best Practice:</strong> Alle Exchange-Bin-, Logging- und Datenbank-Pfade sollten von AV-Scanning ausgenommen sein.</p>"
+
+            $serverHTML += $avHTML
+        }
+        catch {
+            Write-Log -Message "Fehler bei AV Info für ${server}: $_" -Level "ERROR"
+            $serverHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+
+    New-HTMLSection -Title "Antivirus Ausschlüsse" -Content $serverHTML
+}
+
+# ---------------------------------------------------------------
 # 34. DKIM-KONFIGURATION
 # ---------------------------------------------------------------
 function Get-DKIMInfo {
@@ -3703,7 +5172,7 @@ function Build-HTMLDocument {
             margin-top: 20px;
         }
         h3.server-break {
-            page-break-before: always;
+            page-break-before: avoid;
         }
         h4 {
             color: #555555;
@@ -3789,10 +5258,17 @@ function Build-HTMLDocument {
             margin-top: 40px;
         }
         @media print {
-            body { margin: 20px; }
-            h2 { page-break-before: always; }
-            table { page-break-inside: auto; }
+            body { margin: 20px; line-height: 1.4; font-size: 9pt; }
+            h1, h2, h3, h4 { orphans: 3; widows: 3; }
+            h2 { page-break-before: auto; margin-top: 0; }
+            h3.server-break { page-break-inside: avoid; page-break-before: auto; }
+            .section { page-break-inside: avoid; margin-bottom: 15px; }
+            table { page-break-inside: avoid; margin: 8px 0 15px 0; }
             tr { page-break-inside: avoid; }
+            thead { display: table-header-group; }
+            tfoot { display: table-footer-group; }
+            .toc { page-break-after: always; }
+            .cover-page { page-break-after: always; }
         }
     </style>
 "@
@@ -3873,9 +5349,18 @@ function Get-DocSectionRegistry {
     return @(
         # === HARDWARE & OS ===
         [PSCustomObject]@{ Key = "Hardware";           Label = "Hardware & Server-Details";        Category = "Hardware & OS";      Function = "Get-HardwareInformation" }
+        [PSCustomObject]@{ Key = "ProcessorCores";     Label = "Processor Core Analyse";            Category = "Hardware & OS";      Function = "Get-ProcessorCoreAnalysis" }
+        [PSCustomObject]@{ Key = "RAM";                Label = "RAM Requirements Check";            Category = "Hardware & OS";      Function = "Get-RAMRequirementsInfo" }
         [PSCustomObject]@{ Key = "Patch";              Label = "Exchange Version & Build";          Category = "Hardware & OS";      Function = "Get-PatchInformation" }
+        [PSCustomObject]@{ Key = "Software";           Label = "Installierte Software";             Category = "Hardware & OS";      Function = "Get-InstalledSoftwareInfo" }
+        [PSCustomObject]@{ Key = "Network";            Label = "Netzwerk-Konfiguration (NIC Speed)"; Category = "Hardware & OS";    Function = "Get-NetworkConfigurationInfo" }
+        [PSCustomObject]@{ Key = "PowerPlan";          Label = "Power Plan & Performance";          Category = "Hardware & OS";      Function = "Get-PowerPlanInfo" }
+        [PSCustomObject]@{ Key = "SMBv1";              Label = "SMBv1 Status (Sicherheit)";         Category = "Hardware & OS";      Function = "Get-SMBv1StatusInfo" }
         [PSCustomObject]@{ Key = "EventLog";           Label = "Event Logs (7 Tage)";               Category = "Hardware & OS";      Function = "Get-EventLogInfo" }
         [PSCustomObject]@{ Key = "Firewall";           Label = "Firewall-Regeln & Ports";           Category = "Hardware & OS";      Function = "Get-FirewallInfo" }
+        [PSCustomObject]@{ Key = "DiskSpace";          Label = "Disk Space (DB/Logs/Temp)";         Category = "Hardware & OS";      Function = "Get-DiskSpaceInfo" }
+        [PSCustomObject]@{ Key = "RPCPort";            Label = "RPC Port 135 Status";               Category = "Hardware & OS";      Function = "Get-RPCPortStatusInfo" }
+        [PSCustomObject]@{ Key = "LDAP";               Label = "LDAP Konnektivität (DC)";           Category = "Hardware & OS";      Function = "Get-LDAPConnectivityInfo" }
         [PSCustomObject]@{ Key = "Licensing";          Label = "Lizenzierung";                      Category = "Hardware & OS";      Function = "Get-LicensingInfo" }
 
         # === ACTIVE DIRECTORY ===
@@ -3884,10 +5369,16 @@ function Get-DocSectionRegistry {
 
         # === EXCHANGE GRUNDKONFIGURATION ===
         [PSCustomObject]@{ Key = "ExchangeServer";     Label = "Exchange Server Übersicht";         Category = "Exchange Basis";     Function = "Get-ExchangeServerOverview" }
+        [PSCustomObject]@{ Key = "ExchangeServices";   Label = "Exchange Service Status";           Category = "Exchange Basis";     Function = "Get-ExchangeServiceStatusInfo" }
         [PSCustomObject]@{ Key = "OrgConfig";          Label = "Organisations-Konfiguration";       Category = "Exchange Basis";     Function = "Get-OrganizationConfigInfo" }
         [PSCustomObject]@{ Key = "URLs";               Label = "URLs / VirtualDirectories / EEMS";  Category = "Exchange Basis";     Function = "Get-ExchangeURLs" }
+        [PSCustomObject]@{ Key = "IISAppPools";        Label = "IIS Application Pool Konfiguration"; Category = "Exchange Basis";   Function = "Get-IISAppPoolSettingsInfo" }
         [PSCustomObject]@{ Key = "Database";           Label = "Datenbanken & DAG";                 Category = "Exchange Basis";     Function = "Get-DatabaseAndDAGInfo" }
-        [PSCustomObject]@{ Key = "Certificate";        Label = "Zertifikate";                       Category = "Exchange Basis";     Function = "Get-CertificateInfo" }
+        [PSCustomObject]@{ Key = "DAGHealth";          Label = "DAG Replication Health";            Category = "Exchange Basis";     Function = "Get-DAGReplicationHealthInfo" }
+        [PSCustomObject]@{ Key = "DBCopies";           Label = "Database Copies & Redundanz";       Category = "Exchange Basis";     Function = "Get-DatabaseCopiesInfo" }
+        [PSCustomObject]@{ Key = "Certificate";        Label = "Zertifikate & Ablauf-Status";       Category = "Exchange Basis";     Function = "Get-CertificateInfo" }
+        [PSCustomObject]@{ Key = "CertExpiration";     Label = "Certificate Expiration Check";      Category = "Exchange Basis";     Function = "Get-CertificateExpirationInfo" }
+        [PSCustomObject]@{ Key = "MAPI";               Label = "MAPI Connectivity (Outlook)";       Category = "Exchange Basis";     Function = "Get-MAPIConnectivityInfo" }
         [PSCustomObject]@{ Key = "RBAC";               Label = "RBAC-Rollen";                       Category = "Exchange Basis";     Function = "Get-RBACInfo" }
 
         # === MAIL-FLOW & TRANSPORT ===
@@ -3914,6 +5405,7 @@ function Get-DocSectionRegistry {
         # === SICHERHEIT ===
         [PSCustomObject]@{ Key = "Security";           Label = "Sicherheit & Authentifizierung";    Category = "Sicherheit";         Function = "Get-SecurityAndAuthInfo" }
         [PSCustomObject]@{ Key = "AntiSpam";           Label = "Anti-Spam / Anti-Malware";          Category = "Sicherheit";         Function = "Get-AntiSpamMalwareInfo" }
+        [PSCustomObject]@{ Key = "AntiVirus";          Label = "Antivirus Ausschlüsse";             Category = "Sicherheit";         Function = "Get-AntivirusExclusionsInfo" }
         [PSCustomObject]@{ Key = "MobileDevice";       Label = "Mobile Device Policies";            Category = "Sicherheit";         Function = "Get-MobileDeviceInfo" }
         [PSCustomObject]@{ Key = "Throttling";         Label = "Throttling Policies";               Category = "Sicherheit";         Function = "Get-ThrottlingPolicyInfo" }
 
@@ -4587,7 +6079,7 @@ try {
     # Konsolenausgabe
     Write-Host "`n" -NoNewline
     Write-Host "===============================================================" -ForegroundColor Cyan
-    Write-Host "  Exchange Dokumentation abgeschlossen! (v1.0 - 2019/SE)" -ForegroundColor Cyan
+    Write-Host "  Exchange Dokumentation abgeschlossen! (v1.4 - 2019/SE)" -ForegroundColor Cyan
     Write-Host "===============================================================" -ForegroundColor Cyan
     foreach ($f in $createdFiles) {
         Write-Host "  Datei: $f" -ForegroundColor White

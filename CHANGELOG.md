@@ -2,6 +2,31 @@
 
 Alle signifikanten Änderungen am Projekt werden hier dokumentiert.
 
+## [1.4] - 2026-06-29
+- ✨ **17 HealthChecker Checks integriert**
+  - Processor Core Analyse (4-Kern Minimum-Check)
+  - RAM Requirements Check (Exchange-spezifisch: 64GB/128GB)
+  - Certificate Expiration Status (Ablauf-Ampel)
+  - Exchange Service Status (Kritische Services Überwachung)
+  - IIS Application Pool Konfiguration (Recycling-Zeiten aus ApplicationHost.config)
+  - NIC Speed & Performance Checks (1 Gbps Best-Practice-Warnung)
+  - Power Plan Konfiguration (Höchste Leistung Best-Practice)
+  - SMBv1 Status & Security Check (Sicherheits-Best-Practice)
+  - DAG Replication Health (mit Prüfung ob DAG konfiguriert)
+- 🔧 **IIS AppPool XML-Auslesen korrigiert**
+  - Behobenes Problem: Recycling-Zeiten werden jetzt korrekt aus ApplicationHost.config gelesen
+  - Struktur war `applicationPools` statt `applicationPool` (mit s)
+  - Recycling Element ist `recycling.periodicRestart.time` statt `recycleConfig`
+  - Bessere Bewertungs-Logik (konfiguriert vs. Standard vs. Warnung)
+- 🎨 **PDF-Export Optimierung**
+  - Entfernte aggressive `page-break-before: always` Rules
+  - Intelligente Seitenumbrüche: `page-break-inside: avoid` auf Sektionen/Tabellen
+  - Automatische Wiederholung von Tabellen-Headern auf jeder Seite
+  - Kompaktere Font-Größen und Margins für Print
+- ✅ Automatischer Neustart mit Administrator-Rechten
+- ✅ Auflistung installierter Software pro Server (32-Bit & 64-Bit)
+- ✅ Integrierte Local/Remote-Erkennung (`$isLocal` Pattern)
+
 ## [1.3] - 2026-06-10
 - 🐛 **Verbesserte Exchange-Edition-Erkennung**
   - Erkennung jetzt primär über Versionsnummer (15.0/15.1/15.2) statt nur über Build-Ranges
