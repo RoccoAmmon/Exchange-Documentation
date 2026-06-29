@@ -3,7 +3,7 @@
 > **Automatische Erfassung und Dokumentation von Microsoft Exchange On-Premises Umgebungen (Exchange 2013, 2016, 2019 & Subscription Edition)**
 
 [![Status](https://img.shields.io/badge/Status-Release-brightgreen?style=flat-square)](./CHANGELOG.md)
-[![Version](https://img.shields.io/badge/Version-1.4-blue?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-1.5-blue?style=flat-square)](./CHANGELOG.md)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-blue?style=flat-square)](https://www.microsoft.com/en-us/download/details.aspx?id=50395)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
 [![GitHub Issues](https://img.shields.io/github/issues/RoccoAmmon/Exchange-Documentation?style=flat-square)](https://github.com/RoccoAmmon/Exchange-Documentation/issues)
@@ -52,7 +52,18 @@ Das Tool unterstützt **Exchange Server 2013, 2016, 2019** sowie **Exchange Serv
 - Litigation Hold und In-Place Hold Status
 - RBAC-Rollengruppen und Berechtigungen
 
-### 🛡️ Erweiterte Funktionen
+### �️ Modernes GUI-Redesign (v1.5)
+- **Komplett überarbeitete WPF-Oberfläche** mit modernem, sauberem Design
+- **Farbverlauf-Header** mit Firmenlogo-Bereich und Version-Badge
+- **Moderne Karten (Cards)** mit dezenten Schatteneffekten für alle Bereiche
+- **Kategorisierte Dokumentationsbereiche** mit Icons und分组 visueller Trennung
+- **Farbige Status-Anzeige** mit Icons (Error/Success/Info)
+- **Elegante Toggle-Buttons** für Ausgabeformat-Auswahl
+- **Benutzerdefinierte Steuerelemente** (ScrollViewer, CheckBox, TextBox, Buttons)
+- **Verbesserte Statusmeldungen** während der Dokumentation
+- **Automatische Erstellung des Ausgabeverzeichnisses**
+
+### �🛡️ Erweiterte Funktionen
 - **Exchange Emergency Mitigation Service (EEMS)** - Status und Telemetrie
 - **Transportkomponenten - Physische Speicherorte** - Queue-DB, Logs, Message-Tracking, SMTP-Protokolle, Safety-Net
 - Active Directory Integration (FSMO-Rollen, Schema-Version)

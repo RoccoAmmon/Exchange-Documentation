@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Exchange On-Premises Dokumentations-Skript (v1.4 - Exchange 2013/2016/2019 & SE Support)
+    Exchange On-Premises Dokumentations-Skript (v1.5 - Exchange 2013/2016/2019 & SE Support)
 .DESCRIPTION
     Erstellt eine umfassende HTML-Dokumentation der gesamten Exchange On-Premises Umgebung.
     Unterstützt Exchange Server 2019 und Exchange Server Subscription Edition (SE).
@@ -9,6 +9,17 @@
     WICHTIG: Diese Version verwendet CIM-Sessions mit automatischem DCOM-Fallback,
     sodass das Skript auch funktioniert, wenn WinRM (PowerShell Remoting) nicht
     korrekt konfiguriert ist.
+
+    NEU in v1.5 (Modernes GUI-Redesign & Bugfixes):
+    - Komplett überarbeitete WPF-Oberfläche mit modernem Design
+    - Neue Header-Grafik mit Farbverlauf und Version-Badge
+    - Moderne Karten (Cards) für alle Bereiche mit Schatteneffekten
+    - Kategorisierte Server-Auswahl mit Icons und Farbcodierung
+    - Neue Status-Anzeige mit farbigen Hinweisen (Error/Success/Info)
+    - Elegante Toggle-Buttons für Ausgabeformate
+    - Custom ScrollViewer, CheckBox, TextBox und Button-Styles
+    - Verbesserte Fehlerbehandlung und Logging-Mechanismen
+    - Automatische Erstellung des Ausgabeverzeichnisses
 
     NEU in v1.4 (17 Health Checks):
     - Automatischer Neustart mit Administrator-Rechten
@@ -115,19 +126,17 @@
     Autor:           Rocco Ammon
     Version:         1.4
     Erstellt:        2026-03-05
-    Letzte Änderung: 2026-06-29
-    Änderungen:      v1.4 - Finale Release mit HealthChecker & IIS Fixes:
-                          • Processor Core Analyse (Mindestanforderung 4 Kerne)
-                          • RAM Requirements Check (Exchange-spezifisch)
-                          • Certificate Expiration Status (Ablauf-Überwachung)
-                          • Exchange Service Status (Kritische Services)
-                          • IIS Application Pool Konfiguration
-                          • NIC Speed & Performance Checks
-                          • Power Plan Konfiguration
-                          • SMBv1 Status & Security Check
-                          • DAG Replication Health
-                          • Automatischer Neustart mit Administrator-Rechten
-                          • Auflistung installierter Software pro Server
+    Letzte Änderung: 2026-06-30
+    Änderungen:      v1.5 - Modernes GUI-Redesign & Bugfixes:
+                          • Komplett überarbeitete WPF-Oberfläche mit modernem Design
+                          • Neue Header-Grafik mit Farbverlauf und Version-Badge
+                          • Moderne Karten (Cards) für alle Bereiche mit Schatteneffekten
+                          • Kategorisierte Server-Auswahl mit Icons und Farbcodierung
+                          • Neue Status-Anzeige mit farbigen Hinweisen (Error/Success/Info)
+                          • Elegante Toggle-Buttons für Ausgabeformate
+                          • Custom ScrollViewer, CheckBox, TextBox und Button-Styles
+                          • Verbesserte Fehlerbehandlung und Logging-Mechanismen
+                          • Automatische Erstellung des Ausgabeverzeichnisses
                      v1.3 - Verbesserte Exchange-Edition-Erkennung (Unterstützung 2013/2016/2019/SE via Versionsnummer)
                      v1.2 - TLS/SSL Konfiguration mit Best Practice Bewertung
                      v1.1 - Erweiterte Transportkomponenten-Dokumentation (Speicherorte, Queue-DB, Message-Tracking, SMTP-Logs, Safety-Net)
@@ -228,6 +237,16 @@ $script:DocSubTitle             = "$CompanyName"
 $script:DocAuthor               = $env:USERNAME
 $script:DocComputerName         = $env:COMPUTERNAME
 
+# --- Ausgabeverzeichnis erstellen ---
+try {
+    if (-not (Test-Path $script:LogPath)) {
+        New-Item -Path $script:LogPath -ItemType Directory -Force -ErrorAction Stop | Out-Null
+    }
+}
+catch {
+    Write-Host "FEHLER: Ausgabeverzeichnis konnte nicht erstellt werden: $_" -ForegroundColor Red
+}
+
 # --- Sammelvariablen für HTML-Sektionen ---
 $script:HTMLSections            = [System.Collections.ArrayList]::new()
 $script:TOCEntries              = [System.Collections.ArrayList]::new()
@@ -276,6 +295,12 @@ function Write-Log {
     try {
         $logTimestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         $logEntry = "[$logTimestamp] [$Level] $Message"
+
+        # Sicherstellen, dass das Verzeichnis existiert
+        $logDir = Split-Path $script:LogFile -Parent
+        if (-not (Test-Path $logDir)) {
+            New-Item -Path $logDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
+        }
 
         # In Datei schreiben
         Add-Content -Path $script:LogFile -Value $logEntry -Encoding UTF8
@@ -5653,10 +5678,249 @@ function Show-DocumentationGui {
     [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Exchange Server Dokumentation v1.2" Height="900" Width="1100"
-        WindowStartupLocation="CenterScreen" Background="#F5F5F5" ResizeMode="CanResize" MinWidth="900" MinHeight="700">
-    <Grid Margin="20">
+        Title="Exchange Server Dokumentation v1.5" Height="920" Width="1120"
+        WindowStartupLocation="CenterScreen" Background="#EDEDF2" ResizeMode="CanResize" MinWidth="900" MinHeight="700"
+        FontFamily="Segoe UI, Arial, sans-serif">
+    <Window.Resources>
+        <!-- Farben -->
+        <Color x:Key="PrimaryColor">#1A237E</Color>
+        <Color x:Key="PrimaryLight">#3949AB</Color>
+        <Color x:Key="AccentColor">#00BCD4</Color>
+        <Color x:Key="SuccessColor">#43A047</Color>
+        <Color x:Key="ErrorColor">#E53935</Color>
+
+        <SolidColorBrush x:Key="PrimaryBrush" Color="#1A237E"/>
+        <SolidColorBrush x:Key="PrimaryLightBrush" Color="#3949AB"/>
+        <SolidColorBrush x:Key="PrimaryGradientEnd" Color="#283593"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#00BCD4"/>
+        <SolidColorBrush x:Key="SuccessBrush" Color="#43A047"/>
+        <SolidColorBrush x:Key="ErrorBrush" Color="#E53935"/>
+        <SolidColorBrush x:Key="CardBg" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="PageBg" Color="#EDEDF2"/>
+        <SolidColorBrush x:Key="TextPrimary" Color="#212121"/>
+        <SolidColorBrush x:Key="TextSecondary" Color="#757575"/>
+
+        <!-- Modernes GroupBox-Style (Card) -->
+        <Style x:Key="CardStyle" TargetType="Border">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="CornerRadius" Value="10"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="16"/>
+            <Setter Property="Margin" Value="0,0,0,14"/>
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect BlurRadius="16" ShadowDepth="2" Color="#1A000000" Opacity="0.12"/>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Button Primary Style -->
+        <Style x:Key="PrimaryButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="44"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" CornerRadius="8" Background="#1A237E" BorderThickness="0">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#283593"/>
+                                <Setter TargetName="border" Property="Effect">
+                                    <Setter.Value>
+                                        <DropShadowEffect BlurRadius="12" ShadowDepth="3" Color="#FF1A237E" Opacity="0.4"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#0D154A"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Button Secondary Style -->
+        <Style x:Key="SecondaryButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="44"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="BorderThickness" Value="1.5"/>
+            <Setter Property="Foreground" Value="#1A237E"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" CornerRadius="8" Background="White" BorderBrush="#1A237E" BorderThickness="1.5">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#F0F0FF"/>
+                                <Setter TargetName="border" Property="Effect">
+                                    <Setter.Value>
+                                        <DropShadowEffect BlurRadius="8" ShadowDepth="2" Color="#1A000000" Opacity="0.1"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#E0E0F0"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Modern CheckBox Style -->
+        <Style x:Key="ModernCheckBox" TargetType="CheckBox">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Foreground" Value="#212121"/>
+            <Setter Property="Margin" Value="0,3,0,3"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <BulletDecorator Background="Transparent">
+                            <BulletDecorator.Bullet>
+                                <Border x:Name="CheckBorder" Width="20" Height="20" CornerRadius="4" Background="White" BorderBrush="#BDBDBD" BorderThickness="1.5">
+                                    <Path x:Name="CheckMark" Width="12" Height="12" Stretch="Uniform" Fill="#1A237E" Data="M 0 6 L 4 10 L 10 2" Visibility="Hidden" Margin="0,0,0,0"/>
+                                </Border>
+                            </BulletDecorator.Bullet>
+                            <ContentPresenter Margin="8,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                        </BulletDecorator>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="CheckBorder" Property="Background" Value="#E8EAF6"/>
+                                <Setter TargetName="CheckBorder" Property="BorderBrush" Value="#1A237E"/>
+                                <Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="CheckBorder" Property="BorderBrush" Value="#1A237E"/>
+                                <Setter TargetName="CheckBorder" Property="Effect">
+                                    <Setter.Value>
+                                        <DropShadowEffect BlurRadius="6" ShadowDepth="1" Color="#1A000000" Opacity="0.1"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Toggle Button Style für Formate -->
+        <Style x:Key="FormatToggleStyle" TargetType="ToggleButton">
+            <Setter Property="Height" Value="42"/>
+            <Setter Property="Width" Value="110"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,0,14,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="border" CornerRadius="8" Background="White" BorderBrush="#BDBDBD" BorderThickness="1.5">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock x:Name="Icon" Text="●" FontSize="10" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="#BDBDBD"/>
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#E8EAF6"/>
+                                <Setter TargetName="border" Property="BorderBrush" Value="#1A237E"/>
+                                <Setter TargetName="Icon" Property="Foreground" Value="#1A237E"/>
+                                <Setter TargetName="Icon" Property="Text" Value="◆"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="BorderBrush" Value="#3949AB"/>
+                                <Setter TargetName="border" Property="Effect">
+                                    <Setter.Value>
+                                        <DropShadowEffect BlurRadius="8" ShadowDepth="2" Color="#1A000000" Opacity="0.08"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- TextBox Modern Style -->
+        <Style x:Key="ModernTextBox" TargetType="TextBox">
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="BorderThickness" Value="1.5"/>
+            <Setter Property="BorderBrush" Value="#BDBDBD"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="border" CornerRadius="6" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="10,0"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="BorderBrush" Value="#3949AB"/>
+                            </Trigger>
+                            <Trigger Property="IsFocused" Value="True">
+                                <Setter TargetName="border" Property="BorderBrush" Value="#1A237E"/>
+                                <Setter TargetName="border" Property="Effect">
+                                    <Setter.Value>
+                                        <DropShadowEffect BlurRadius="8" ShadowDepth="1" Color="#FF1A237E" Opacity="0.15"/>
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ScrollViewer Modern Style -->
+        <Style x:Key="ModernScrollViewer" TargetType="ScrollViewer">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollViewer">
+                        <Grid>
+                            <ScrollContentPresenter Margin="{TemplateBinding Padding}"/>
+                            <ScrollBar x:Name="PART_VerticalScrollBar" HorizontalAlignment="Right" Width="8" Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}">
+                                <ScrollBar.Template>
+                                    <ControlTemplate TargetType="ScrollBar">
+                                        <Grid>
+                                            <Track x:Name="PART_Track">
+                                                <Track.Thumb>
+                                                    <Thumb>
+                                                        <Thumb.Template>
+                                                            <ControlTemplate TargetType="Thumb">
+                                                                <Border CornerRadius="4" Background="#C0C0C0" Margin="0,2"/>
+                                                            </ControlTemplate>
+                                                        </Thumb.Template>
+                                                    </Thumb>
+                                                </Track.Thumb>
+                                            </Track>
+                                        </Grid>
+                                    </ControlTemplate>
+                                </ScrollBar.Template>
+                            </ScrollBar>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="24">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -5666,73 +5930,177 @@ function Show-DocumentationGui {
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0" Background="#0078D4" CornerRadius="6" Padding="15" Margin="0,0,0,15">
-            <StackPanel>
-                <TextBlock Text="Exchange Server Dokumentation" FontSize="24" FontWeight="Bold" Foreground="White"/>
-                <TextBlock Text="TLS/SSL Konfiguration | Automatische Erkennung | Multi-Format Export" Foreground="#B3D9FF" FontSize="12" Margin="0,4,0,0"/>
-            </StackPanel>
+        <!-- ===== HEADER ===== -->
+        <Border Grid.Row="0" CornerRadius="12" Margin="0,0,0,20" BorderThickness="0">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Color="#1A237E" Offset="0.0"/>
+                    <GradientStop Color="#283593" Offset="0.5"/>
+                    <GradientStop Color="#3949AB" Offset="1.0"/>
+                </LinearGradientBrush>
+            </Border.Background>
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="20" ShadowDepth="4" Color="#FF1A237E" Opacity="0.35"/>
+            </Border.Effect>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <!-- Icon Bereich -->
+                <Border Grid.Column="0" Width="56" Height="56" CornerRadius="10" Background="#FFFFFF22" Margin="16,16,0,16">
+                    <TextBlock Text="📊" FontSize="28" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <!-- Titel -->
+                <StackPanel Grid.Column="1" Margin="16,16,0,16" VerticalAlignment="Center">
+                    <TextBlock Text="Exchange Server Dokumentation" FontSize="26" FontWeight="SemiBold" Foreground="White"/>
+                    <TextBlock Text="TLS/SSL · Automatische Erkennung · Multi-Format Export · Health Checks" Foreground="#90CAF9" FontSize="13" Margin="0,4,0,0"/>
+                </StackPanel>
+                <!-- Version Badge -->
+                <Border Grid.Column="2" CornerRadius="6" Background="#FFFFFF22" Padding="10,6" Margin="0,0,16,0" VerticalAlignment="Center">
+                    <TextBlock Text="v1.5" Foreground="White" FontWeight="Bold" FontSize="13"/>
+                </Border>
+            </Grid>
         </Border>
 
-        <GroupBox Grid.Row="1" Header="Exchange Server" Margin="0,0,0,12" Padding="10" Background="White">
+        <!-- ===== SERVER AUSWAHL ===== -->
+        <Border Grid.Row="1" Style="{StaticResource CardStyle}">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
-                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-                    <CheckBox Name="ChkSelectAllServers" Content="Alle Server" FontWeight="Bold" Margin="0,0,20,0" VerticalAlignment="Center"/>
-                    <TextBlock Text="Erkannte Server:" VerticalAlignment="Center" Foreground="#555" Margin="0,0,10,0"/>
-                </StackPanel>
-                <WrapPanel Grid.Row="1" Name="ServerPanel" Orientation="Horizontal" MinHeight="30"/>
-                <TextBox Grid.Row="1" Name="TxtServersManual" Height="28" Visibility="Collapsed" VerticalContentAlignment="Center" Margin="0,4,0,0"/>
-            </Grid>
-        </GroupBox>
-
-        <Grid Grid.Row="2" Margin="0,0,0,12">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="20"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-            <GroupBox Grid.Column="0" Header="Organisation" Padding="10" Background="White">
-                <TextBox Name="TxtCompany" Height="28" VerticalContentAlignment="Center"/>
-            </GroupBox>
-            <GroupBox Grid.Column="2" Header="Ausgabepfad" Padding="10" Background="White">
-                <Grid>
+                <Grid Grid.Row="0" Margin="0,0,0,10">
                     <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBox Grid.Column="0" Name="TxtOutputPath" Height="28" VerticalContentAlignment="Center"/>
-                    <Button Grid.Column="1" Name="BtnBrowse" Content="..." Width="40" Height="28" Margin="8,0,0,0" Padding="0"/>
+                    <StackPanel Grid.Column="0" Orientation="Horizontal">
+                        <TextBlock Text="🖥️" FontSize="18" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <TextBlock Text="Exchange Server" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal">
+                        <CheckBox Name="ChkSelectAllServers" Content="Alle auswählen" Style="{StaticResource ModernCheckBox}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </StackPanel>
                 </Grid>
-            </GroupBox>
-        </Grid>
+                <Border Grid.Row="1" CornerRadius="8" Background="#F5F5F8" Padding="14,12" MinHeight="40">
+                    <Grid>
+                        <WrapPanel Grid.Row="0" Name="ServerPanel" Orientation="Horizontal"/>
+                        <TextBox Grid.Row="0" Name="TxtServersManual" Height="32" Visibility="Collapsed" VerticalContentAlignment="Center" Margin="0,0,0,0" Style="{StaticResource ModernTextBox}"/>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
 
-        <GroupBox Grid.Row="3" Header="Ausgabeformate" Margin="0,0,0,12" Padding="10" Background="White">
-            <StackPanel Orientation="Horizontal">
-                <CheckBox Name="ChkHtml" Content="HTML" IsChecked="True" Margin="0,0,30,0" VerticalAlignment="Center" FontSize="13"/>
-                <CheckBox Name="ChkPdf" Content="PDF" Margin="0,0,30,0" VerticalAlignment="Center" FontSize="13"/>
-                <CheckBox Name="ChkMarkdown" Content="Markdown" VerticalAlignment="Center" FontSize="13"/>
-            </StackPanel>
-        </GroupBox>
-
-        <GroupBox Grid.Row="4" Header="Dokumentationsbereiche (nach Kategorien)" Margin="0,0,0,12" Padding="10" Background="White">
-            <DockPanel>
-                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
-                    <CheckBox Name="ChkSelectAll" Content="Alle auswählen" FontWeight="Bold" IsChecked="True" VerticalAlignment="Center"/>
+        <!-- ===== ORGANISATION & AUSGABEPFAD ===== -->
+        <Border Grid.Row="2" Style="{StaticResource CardStyle}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="24"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <!-- Organisation -->
+                <StackPanel Grid.Column="0">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="🏢" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock Text="Organisation" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <TextBox Name="TxtCompany" Style="{StaticResource ModernTextBox}"/>
                 </StackPanel>
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel Name="CategoryPanel" Orientation="Vertical"/>
-                </ScrollViewer>
-            </DockPanel>
-        </GroupBox>
+                <!-- Ausgabepfad -->
+                <StackPanel Grid.Column="2">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="📁" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock Text="Ausgabepfad" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Name="TxtOutputPath" Style="{StaticResource ModernTextBox}"/>
+                        <Button Grid.Column="1" Name="BtnBrowse" Content="📂" Width="40" Height="36" Margin="10,0,0,0" Padding="0"
+                                FontSize="18" Cursor="Hand" BorderThickness="1.5" BorderBrush="#BDBDBD" Background="White"
+                                ToolTip="Ausgabeverzeichnis wählen">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border x:Name="border" CornerRadius="6" Background="White" BorderBrush="#BDBDBD" BorderThickness="1.5">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="border" Property="Background" Value="#F5F5FF"/>
+                                            <Setter TargetName="border" Property="BorderBrush" Value="#3949AB"/>
+                                        </Trigger>
+                                        <Trigger Property="IsPressed" Value="True">
+                                            <Setter TargetName="border" Property="Background" Value="#E8EAF6"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                    </Grid>
+                </StackPanel>
+            </Grid>
+        </Border>
 
-        <TextBlock Grid.Row="5" Name="TxtStatus" Foreground="#D32F2F" FontWeight="Bold" Margin="0,0,0,12" TextWrapping="Wrap" MinHeight="20"/>
+        <!-- ===== AUSGABEFORMATE ===== -->
+        <Border Grid.Row="3" Style="{StaticResource CardStyle}">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                    <TextBlock Text="📄" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBlock Text="Ausgabeformate" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <ToggleButton Name="ChkHtml" Content="HTML" Style="{StaticResource FormatToggleStyle}" IsChecked="True"/>
+                    <ToggleButton Name="ChkPdf" Content="PDF" Style="{StaticResource FormatToggleStyle}"/>
+                    <ToggleButton Name="ChkMarkdown" Content="Markdown" Style="{StaticResource FormatToggleStyle}"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
 
-        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
-            <Button Name="BtnStart" Content="DOKUMENTATION STARTEN" Width="220" Height="40" Background="#0078D4" Foreground="White" FontWeight="Bold" FontSize="14" Margin="0,0,12,0" Padding="5"/>
-            <Button Name="BtnCancel" Content="Abbrechen" Width="120" Height="40" FontSize="13" Padding="5"/>
+        <!-- =Category Header== -->
+        <Border Grid.Row="4" Style="{StaticResource CardStyle}" Padding="16,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <TextBlock Text="📋" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBlock Text="Dokumentationsbereiche" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
+                </StackPanel>
+                <CheckBox Grid.Column="2" Name="ChkSelectAll" Content="Alle auswählen" Style="{StaticResource ModernCheckBox}" FontWeight="SemiBold" IsChecked="True"/>
+            </Grid>
+        </Border>
+
+        <!-- ===== DOKUMENTATIONSBEREICHE ===== -->
+        <Border Grid.Row="5" Style="{StaticResource CardStyle}" Padding="0" Margin="0,0,0,14">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Style="{StaticResource ModernScrollViewer}" Padding="16,12">
+                <StackPanel Name="CategoryPanel" Orientation="Vertical"/>
+            </ScrollViewer>
+        </Border>
+
+        <!-- ===== STATUS ===== -->
+        <Border Grid.Row="6" CornerRadius="8" Padding="12,10" Margin="0,0,0,12" Background="#FFF3E0" BorderThickness="0" Visibility="Collapsed" Name="StatusBorder">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="ℹ️" FontSize="16" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBlock Grid.Column="1" Name="TxtStatus" Foreground="#E65100" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <!-- ===== BUTTONS ===== -->
+        <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,0,0">
+            <Button Name="BtnCancel" Content="Abbrechen" Width="130" Style="{StaticResource SecondaryButtonStyle}" Margin="0,0,14,0"/>
+            <Button Name="BtnStart" Content="  🚀  Dokumentation starten" Width="260" Style="{StaticResource PrimaryButtonStyle}"/>
         </StackPanel>
     </Grid>
 </Window>
@@ -5761,6 +6129,7 @@ function Show-DocumentationGui {
         $chkSelectAll        = $window.FindName("ChkSelectAll")
         $categoryPanel       = $window.FindName("CategoryPanel")
         $txtStatus           = $window.FindName("TxtStatus")
+        $statusBorder        = $window.FindName("StatusBorder")
         $btnStart            = $window.FindName("BtnStart")
         $btnCancel           = $window.FindName("BtnCancel")
     }
@@ -5775,6 +6144,7 @@ function Show-DocumentationGui {
 
     # Server-Checkboxen
     $serverCheckboxes = @{}
+    $modernCheckboxStyle = $window.FindResource("ModernCheckBox")
     if ($detectedServers.Count -gt 0) {
         foreach ($srv in $detectedServers) {
             $cb = New-Object System.Windows.Controls.CheckBox
@@ -5783,6 +6153,7 @@ function Show-DocumentationGui {
             $cb.IsChecked = $true
             $cb.Margin = "0,0,20,6"
             $cb.FontSize = 13
+            $cb.Style = $modernCheckboxStyle
             [void]$serverPanel.Children.Add($cb)
             $serverCheckboxes[$srv] = $cb
         }
@@ -5808,11 +6179,68 @@ function Show-DocumentationGui {
     $categories = $registry | Group-Object -Property Category
 
     foreach ($cat in $categories) {
-        $gb = New-Object System.Windows.Controls.GroupBox
-        $gb.Header = $cat.Name
-        $gb.Margin = "0,0,0,10"
-        $gb.Padding = "8"
-        $gb.Background = [System.Windows.Media.Brushes]::White
+        $border = New-Object System.Windows.Controls.Border
+        $border.CornerRadius = [System.Windows.CornerRadius]::new(8)
+        $border.Background = [System.Windows.Media.Brushes]::White
+        $border.BorderThickness = [System.Windows.Thickness]::new(0)
+        $border.Margin = [System.Windows.Thickness]::new(0, 0, 0, 12)
+        $border.Effect = New-Object System.Windows.Media.Effects.DropShadowEffect -Property @{
+            BlurRadius = 12
+            ShadowDepth = 1
+            Color = [System.Windows.Media.Color]::FromArgb(26, 0, 0, 0)
+            Opacity = 0.1
+        }
+
+        $outerSp = New-Object System.Windows.Controls.StackPanel
+        $outerSp.Orientation = "Vertical"
+
+        # Category Header
+        $headerBorder = New-Object System.Windows.Controls.Border
+        $headerBorder.CornerRadius = [System.Windows.CornerRadius]::new(8, 8, 0, 0)
+        $headerBorder.Background = [System.Windows.Media.Brushes]::White
+        $headerBorder.BorderThickness = [System.Windows.Thickness]::new(0)
+        $headerBorder.Padding = [System.Windows.Thickness]::new(12, 10, 12, 8)
+
+        $headerGrid = New-Object System.Windows.Controls.Grid
+        $headerGrid.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = [System.Windows.GridLength]::Auto }))
+        $headerGrid.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) }))
+
+        $iconMap = @{
+            "Hardware & OS"      = "🖥️"
+            "Active Directory"   = "🏛️"
+            "Exchange Basis"     = "⚙️"
+            "Mail-Flow"          = "📨"
+            "DNS & Records"      = "🌐"
+            "Empfänger"          = "👤"
+            "Sicherheit"         = "🔒"
+            "Sicherheit & TLS"   = "🔐"
+            "Compliance"         = "📋"
+        }
+        $catIcon = if ($iconMap.ContainsKey($cat.Name)) { $iconMap[$cat.Name] } else { "📋" }
+
+        $iconText = New-Object System.Windows.Controls.TextBlock
+        $iconText.Text = "$catIcon  $($cat.Name)"
+        $iconText.FontSize = 14
+        $iconText.FontWeight = [System.Windows.FontWeights]::SemiBold
+        $iconText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 33, 33, 33))
+        $iconText.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+        [void]$headerGrid.Children.Add($iconText)
+
+        $headerBorder.Child = $headerGrid
+        [void]$outerSp.Children.Add($headerBorder)
+
+        # Separator
+        $sep = New-Object System.Windows.Controls.Border
+        $sep.Height = 1
+        $sep.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(40, 0, 0, 0))
+        $sep.Margin = [System.Windows.Thickness]::new(12, 0, 12, 0)
+        [void]$outerSp.Children.Add($sep)
+
+        # Content
+        $contentBorder = New-Object System.Windows.Controls.Border
+        $contentBorder.CornerRadius = [System.Windows.CornerRadius]::new(0, 0, 8, 8)
+        $contentBorder.Background = [System.Windows.Media.Brushes]::White
+        $contentBorder.Padding = [System.Windows.Thickness]::new(12, 8, 12, 10)
 
         $sp = New-Object System.Windows.Controls.StackPanel
         $sp.Orientation = "Vertical"
@@ -5824,11 +6252,14 @@ function Show-DocumentationGui {
             $cb.IsChecked = $true
             $cb.Margin = "0,3,0,3"
             $cb.FontSize = 12
+            $cb.Style = $modernCheckboxStyle
             [void]$sp.Children.Add($cb)
             $sectionCheckboxes[$section.Key] = $cb
         }
-        $gb.Content = $sp
-        [void]$categoryPanel.Children.Add($gb)
+        $contentBorder.Child = $sp
+        [void]$outerSp.Children.Add($contentBorder)
+        $border.Child = $outerSp
+        [void]$categoryPanel.Children.Add($border)
     }
 
     $chkSelectAll.Add_Click({
@@ -5849,8 +6280,24 @@ function Show-DocumentationGui {
 
     $script:GuiResult = $null
 
+    # Hilfsfunktion für Status-Anzeige
+    $script:ShowStatus = {
+        param([string]$Message, [string]$Type = "error")
+        $txtStatus.Text = $Message
+        $statusBorder.Visibility = "Visible"
+        switch ($Type) {
+            "error"   { $statusBorder.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 255, 235, 238)); $txtStatus.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 198, 40, 40)) }
+            "success" { $statusBorder.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 232, 245, 233)); $txtStatus.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 46, 125, 50)) }
+            "info"    { $statusBorder.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 227, 242, 253)); $txtStatus.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 21, 101, 192)) }
+        }
+    }
+    $script:HideStatus = {
+        $statusBorder.Visibility = "Collapsed"
+    }
+
     $btnStart.Add_Click({
-        $txtStatus.Text = ""
+        # Status verstecken
+        $statusBorder.Visibility = "Collapsed"
 
         $selectedServers = @()
         if ($detectedServers.Count -gt 0) {
@@ -5863,11 +6310,11 @@ function Show-DocumentationGui {
         }
 
         if ($selectedServers.Count -eq 0) {
-            $txtStatus.Text = "Fehler: Bitte mindestens einen Exchange-Server auswählen."
+            & $script:ShowStatus -Message "Fehler: Bitte mindestens einen Exchange-Server auswählen." -Type "error"
             return
         }
         if ([string]::IsNullOrWhiteSpace($txtOutputPath.Text)) {
-            $txtStatus.Text = "Fehler: Bitte einen Ausgabepfad angeben."
+            & $script:ShowStatus -Message "Fehler: Bitte einen Ausgabepfad angeben." -Type "error"
             return
         }
 
@@ -5876,7 +6323,7 @@ function Show-DocumentationGui {
             if ($sectionCheckboxes[$key].IsChecked) { $selectedSections += $key }
         }
         if ($selectedSections.Count -eq 0) {
-            $txtStatus.Text = "Fehler: Bitte mindestens einen Dokumentationsbereich auswählen."
+            & $script:ShowStatus -Message "Fehler: Bitte mindestens einen Dokumentationsbereich auswählen." -Type "error"
             return
         }
 
@@ -5885,7 +6332,7 @@ function Show-DocumentationGui {
         if ($chkPdf.IsChecked)      { $formats += "PDF" }
         if ($chkMarkdown.IsChecked) { $formats += "Markdown" }
         if ($formats.Count -eq 0) {
-            $txtStatus.Text = "Fehler: Bitte mindestens ein Ausgabeformat wählen."
+            & $script:ShowStatus -Message "Fehler: Bitte mindestens ein Ausgabeformat wählen." -Type "error"
             return
         }
 
@@ -6079,7 +6526,7 @@ try {
     # Konsolenausgabe
     Write-Host "`n" -NoNewline
     Write-Host "===============================================================" -ForegroundColor Cyan
-    Write-Host "  Exchange Dokumentation abgeschlossen! (v1.4 - 2019/SE)" -ForegroundColor Cyan
+    Write-Host "  Exchange Dokumentation abgeschlossen! (v1.5 - 2019/SE)" -ForegroundColor Cyan
     Write-Host "===============================================================" -ForegroundColor Cyan
     foreach ($f in $createdFiles) {
         Write-Host "  Datei: $f" -ForegroundColor White

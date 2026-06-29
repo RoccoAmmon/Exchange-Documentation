@@ -2,6 +2,23 @@
 
 Alle signifikanten Änderungen am Projekt werden hier dokumentiert.
 
+## [1.5] - 2026-06-30
+- 🎨 **Komplettes GUI-Redesign**
+  - Moderne WPF-Oberfläche mit Farbverlauf-Header und Version-Badge
+  - Karten (Cards) mit dezenten Schatteneffekten für alle Bereiche
+  - Kategorisierte Dokumentationsbereiche mit Icons und visueller Trennung
+  - Farbige Status-Anzeige mit Icons (Error/Success/Info)
+  - Elegante Toggle-Buttons für Ausgabeformat-Auswahl
+  - Benutzerdefinierte Steuerelemente (ScrollViewer, CheckBox, TextBox, Buttons)
+- 🐛 **Bugfixes**
+  - `[System.Windows.GridLength]::Star` → korrekte `::new(1, Star)` Syntax
+  - `[System.Windows.Media.Brushes]::FromArgb` → `SolidColorBrush::new(Color::FromArgb)` (8 Stellen)
+  - Doppelte `Thumb`-Zuweisung im ScrollBar-Template entfernt
+  - `LetterSpacing` aus XAML entfernt (nicht in WPF unterstützt)
+  - Automatische Erstellung des Ausgabeverzeichnisses hinzugefügt
+  - Fallback-Verzeichniserstellung in `Write-Log` Funktion
+- ✅ Verbesserte Fehlerbehandlung und Statusmeldungen in der GUI
+
 ## [1.4] - 2026-06-29
 - ✨ **17 HealthChecker Checks integriert**
   - Processor Core Analyse (4-Kern Minimum-Check)
