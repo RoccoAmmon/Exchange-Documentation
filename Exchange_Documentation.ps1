@@ -10,7 +10,7 @@
     sodass das Skript auch funktioniert, wenn WinRM (PowerShell Remoting) nicht
     korrekt konfiguriert ist.
 
-    NEU in v1.7 (Erweiterte System- & Sicherheitschecks):
+    NEU in v1.7 (15 neue System- & Sicherheitschecks):
     - Windows Features & Rollen (installierte Server Rollen)
     - .NET Framework Version & DLLs (Release-Key, Assembly-Versionen)
     - Ausstehende Neustarts (6 Prüfmethoden: PendingFileRename, WU, CBS, ServerMgr, CIM, SCCM)
@@ -25,6 +25,7 @@
     - Security CVE Prüfung (CVE-2021-34470, CVE-2022-21978)
     - HTTP Proxy Konfiguration (WinHTTP, Registry, netsh)
     - Installierte Antivirenlösung (SecurityCenter, Registry, Defender-Status)
+    - NIC Receive Buffer Analyse (Prüfung für 10/25/40 Gbit/s NICs, StalledDueTo-Risiko)
 
     NEU in v1.6 (Erweiterte Dokumentationsbereiche):
     - Message Queue Analyse (Warteschlangen, Status, Nachrichtenanzahl)
@@ -174,7 +175,8 @@
                           • Security CVE Prüfung (CVE-2021-34470, CVE-2022-21978)
                           • HTTP Proxy Konfiguration (WinHTTP, Registry, netsh)
                           • Installierte Antivirenlösung (SecurityCenter WMI, Registry, Defender)
-                     v1.6 - Erweiterte Dokumentationsbereiche:
+                          • NIC Receive Buffer Analyse (10/25/40 Gbit/s, Intel/Microsoft-Empfehlung)
+                     v1.6 - 7 Erweiterte Dokumentationsbereiche:
                           • Message Queue Analyse (Warteschlangen, Status, Nachrichtenanzahl)
                           • Calendar & Resource Mailbox (Raum-/Ressourcenpostfächer, Buchungsoptionen)
                           • Exchange Archive (Archivpostfächer, Quotas, Auto-Expanding Archive)
@@ -7159,6 +7161,154 @@ function Get-AntivirusProductInfo {
     New-HTMLSection -Title "Installierte Antivirenlösung" -Content $avHTML
 }
 
+# ---------------------------------------------------------------
+# 57. NIC RECEIVE BUFFER CHECK
+# ---------------------------------------------------------------
+function Get-NICReceiveBufferInfo {
+    <#
+    .SYNOPSIS
+        Prüft die NIC Receive Buffer Einstellungen auf allen Servern.
+        Zu niedrige Werte bei 10/25/40 Gbit/s NICs können Exchange-Mailbox-Moves blockieren.
+    .DESCRIPTION
+        Empfohlene Receive Buffer Werte laut Intel/ Microsoft:
+        - 1 Gbit/s: 512 (Standard)
+        - 10 Gbit/s: 2048-4096
+        - 25 Gbit/s: 4096
+        - 40+ Gbit/s: 4096-8192
+    #>
+    Write-Log -Message "=== Prüfe NIC Receive Buffers ===" -Level "INFO"
+
+    $nicHTML = ""
+    $nicHTML += "<p><em>Zu niedrige Receive Buffer bei High-Speed NICs (>1 Gbit/s) können zu StalledBy-DueTo-MdbReplication/Availability-Fehlern bei Mailbox-Moves führen.</em></p>"
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "NIC Receive Buffer Check für Server: $server" -Level "INFO"
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+
+            try {
+                $session = New-ServerCimSession -ComputerName $server
+                if (-not $session) { throw "Keine CIM-Session verfügbar." }
+
+                # NICs via CIM abfragen
+                $adapters = Get-CimInstance -CimSession $session -ClassName Win32_NetworkAdapter -ErrorAction SilentlyContinue |
+                    Where-Object { $_.NetEnabled -eq $true -and $_.Speed -gt 0 -and $_.Name -notmatch "Loopback|Virtual|VMware|Hyper-V|VPN|Bluetooth|WAN" }
+
+                if ($adapters) {
+                    $nicData = foreach ($adapter in $adapters) {
+                        $speedGbps = [math]::Round($adapter.Speed / 1e9, 1)
+                        $adapterGuid = $adapter.GUID
+
+                        # Receive Buffer via Registry auslesen
+                        $recvBuffers = $null
+                        $recvBuffersRecommended = "-"
+                        $recvBuffersStatus = "ℹ️"
+
+                        try {
+                            $nicRegPath = "SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}"
+                            $regProv = Get-CimInstance -CimSession $session -ClassName StdRegProv -Namespace root/default -ErrorAction SilentlyContinue
+                            if ($regProv) {
+                                $enumResult = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName EnumKey -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $nicRegPath } -ErrorAction SilentlyContinue
+                                if ($enumResult -and $enumResult.sNames) {
+                                    foreach ($subKey in $enumResult.sNames) {
+                                        $fullPath = "$nicRegPath\$subKey"
+                                        $driverDesc = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName GetStringValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $fullPath; sValueName = "DriverDesc" } -ErrorAction SilentlyContinue
+                                        if ($driverDesc.sValue -and $driverDesc.sValue -eq $adapter.Name) {
+                                            $rbValue = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName GetDWORDValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $fullPath; sValueName = "*ReceiveBuffers" } -ErrorAction SilentlyContinue
+                                            if ($rbValue.uValue -is [int]) { $recvBuffers = $rbValue.uValue }
+                                            break
+                                        }
+                                    }
+                                }
+                            }
+                        } catch {
+                            Write-Log -Message "Registry-Read für ReceiveBuffer fehlgeschlagen: $_" -Level "WARNING"
+                        }
+
+                        # Fallback: Lokal über PowerShell-Cmdlet
+                        if ($null -eq $recvBuffers) {
+                            try {
+                                $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
+                                if ($isLocal) {
+                                    $advProp = Get-NetAdapterAdvancedProperty -Name $adapter.Name -RegistryKeyword "*ReceiveBuffers" -ErrorAction SilentlyContinue
+                                    if ($advProp) { $recvBuffers = $advProp.RegistryValue }
+                                }
+                            } catch { }
+                        }
+
+                        # Empfehlung basierend auf Speed
+                        if ($speedGbps -ge 40) { $recvBuffersRecommended = "4096-8192" }
+                        elseif ($speedGbps -ge 25) { $recvBuffersRecommended = "4096" }
+                        elseif ($speedGbps -ge 10) { $recvBuffersRecommended = "2048-4096" }
+                        else { $recvBuffersRecommended = "512 (Standard)" }
+
+                        # Bewertung
+                        if ($recvBuffers -is [int]) {
+                            if ($speedGbps -ge 25 -and $recvBuffers -lt 4096) { $recvBuffersStatus = "🔴 KRITISCH" }
+                            elseif ($speedGbps -ge 10 -and $recvBuffers -lt 2048) { $recvBuffersStatus = "🟡 Warnung" }
+                            elseif ($speedGbps -ge 10 -and $recvBuffers -lt 4096) { $recvBuffersStatus = "🟡 Warnung" }
+                            else { $recvBuffersStatus = "✅ OK" }
+                        } else {
+                            $recvBuffersStatus = "❓ Nicht ermittelbar"
+                        }
+
+                        [PSCustomObject]@{
+                            "Adapter Name"          = $adapter.Name
+                            "Speed"                 = "$speedGbps Gbit/s"
+                            "MAC-Adresse"           = if ($adapter.MACAddress) { $adapter.MACAddress } else { "-" }
+                            "Receive Buffers (IST)" = if ($recvBuffers -is [int]) { $recvBuffers } else { "Nicht auslesbar" }
+                            "Empfohlen (SOLL)"      = $recvBuffersRecommended
+                            "Status"                = $recvBuffersStatus
+                        }
+                    }
+
+                    if ($nicData) {
+                        $serverHTML += "<h4>Netzwerk-Adapter Receive Buffer Analyse</h4>"
+                        $serverHTML += (ConvertTo-HTMLTable -Data ($nicData | Sort-Object Speed -Descending))
+
+                        # Warnung bei kritischen Werten
+                        $criticalNics = $nicData | Where-Object { $_."Status" -match "KRITISCH" }
+                        $warningNics = $nicData | Where-Object { $_."Status" -match "Warnung" }
+                        if ($criticalNics) {
+                            $serverHTML += "<p class='error'>🔴 KRITISCH: $($criticalNics.Count) High-Speed-NIC(s) haben zu niedrige Receive Buffers! "
+                            $serverHTML += "Dies kann Mailbox-Moves blockieren (StalledDueToTarget_MdbReplication/Availability).</p>"
+                        }
+                        if ($warningNics) {
+                            $serverHTML += "<p class='warning'>🟡 Warnung: $($warningNics.Count) NIC(s) sollten optimiert werden.</p>"
+                        }
+                    } else {
+                        $serverHTML += "<p class='no-data'>Keine physischen Netzwerk-Adapter gefunden.</p>"
+                    }
+                } else {
+                    $serverHTML += "<p class='no-data'>Keine aktiven Netzwerk-Adapter gefunden.</p>"
+                }
+
+                if ($session) { Remove-CimSession -CimSession $session -ErrorAction SilentlyContinue }
+            } catch {
+                Write-Log -Message "NIC Receive Buffer Check für $server fehlgeschlagen: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>NIC-Informationen konnten nicht abgerufen werden: $_</p>"
+            }
+
+            $nicHTML += $serverHTML
+        } catch {
+            Write-Log -Message "Fehler bei NIC Receive Buffer für ${server}: $_" -Level "ERROR"
+            $nicHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+
+    # Best Practice Tabelle
+    $nicHTML += "<h3>Best Practice: NIC Receive Buffer Empfehlungen</h3>"
+    $nicHTML += "<table><thead><tr><th>NIC Geschwindigkeit</th><th>Empfohlene Receive Buffers</th><th>Begründung</th></tr></thead><tbody>"
+    $nicHTML += "<tr class='even'><td>1 Gbit/s</td><td>512 (Standard)</td><td>Ausreichend für Standard-Last</td></tr>"
+    $nicHTML += "<tr class='odd'><td>10 Gbit/s</td><td>2048-4096</td><td>Verhindert Packet Drops bei hohem Durchsatz</td></tr>"
+    $nicHTML += "<tr class='even'><td>25 Gbit/s</td><td>4096</td><td>Empfohlen von Intel für 700/800-Serie NICs</td></tr>"
+    $nicHTML += "<tr class='odd'><td>40+ Gbit/s</td><td>4096-8192</td><td>Für höchste Durchsatz-Szenarien</td></tr>"
+    $nicHTML += "</tbody></table>"
+    $nicHTML += "<p><strong>Quelle:</strong> <a href='https://github.com/microsoft/CSS-Exchange/issues/2560' target='_blank'>Microsoft CSS-Exchange Issue #2560</a> & Intel Performance Tuning Guide</p>"
+
+    New-HTMLSection -Title "NIC Receive Buffer Analyse" -Content $nicHTML
+}
+
 #endregion
 
 #region ============================================================
@@ -7479,6 +7629,7 @@ function Get-DocSectionRegistry {
         [PSCustomObject]@{ Key = "SecurityCVE";        Label = "Security CVE Prüfung";              Category = "Sicherheit";         Function = "Get-SecurityCVEInfo" }
         [PSCustomObject]@{ Key = "HttpProxy";          Label = "HTTP Proxy Konfiguration";          Category = "Sicherheit";         Function = "Get-HttpProxyInfo" }
         [PSCustomObject]@{ Key = "AntivirusProduct";  Label = "Installierte Antivirenlösung";      Category = "Sicherheit";         Function = "Get-AntivirusProductInfo" }
+        [PSCustomObject]@{ Key = "NICReceiveBuffer"; Label = "NIC Receive Buffer Analyse";         Category = "Hardware & OS";      Function = "Get-NICReceiveBufferInfo" }
 
         # === NEU IN v1.6 ===
         [PSCustomObject]@{ Key = "MessageQueue";       Label = "Message Queue Analyse";             Category = "Mail-Flow";          Function = "Get-MessageQueueInfo" }
