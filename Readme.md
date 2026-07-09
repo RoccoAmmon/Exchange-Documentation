@@ -86,6 +86,7 @@ Das Tool unterstützt **Exchange Server 2013, 2016, 2019** sowie **Exchange Serv
 - **Security CVE Prüfung** – CVE-2021-34470, CVE-2022-21978
 - **HTTP Proxy Konfiguration** – WinHTTP, Registry, netsh
 - **Installierte Antivirenlösung** – SecurityCenter WMI, Registry, Microsoft Defender Status
+- **NIC Receive Buffer Analyse** – 10/25/40 Gbit/s Check, Intel/Microsoft-Empfehlung
 
 ### 📦 Neue Dokumentationsbereiche (v1.6)
 - **Message Queue Analyse** – Status, Nachrichtenanzahl und Retry-Queues pro Transport-Warteschlange
