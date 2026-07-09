@@ -3,7 +3,7 @@
 > **Automatische Erfassung und Dokumentation von Microsoft Exchange On-Premises Umgebungen (Exchange 2013, 2016, 2019 & Subscription Edition)**
 
 [![Status](https://img.shields.io/badge/Status-Release-brightgreen?style=flat-square)](./CHANGELOG.md)
-[![Version](https://img.shields.io/badge/Version-1.6-blue?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-1.7-blue?style=flat-square)](./CHANGELOG.md)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-blue?style=flat-square)](https://www.microsoft.com/en-us/download/details.aspx?id=50395)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
 [![GitHub Issues](https://img.shields.io/github/issues/RoccoAmmon/Exchange-Documentation?style=flat-square)](https://github.com/RoccoAmmon/Exchange-Documentation/issues)
@@ -71,6 +71,22 @@ Das Tool unterstützt **Exchange Server 2013, 2016, 2019** sowie **Exchange Serv
 - Automatischer CIM → DCOM Fallback
 - Mail-Tips & MailTips-Konfiguration
 - Journal Rules und Message Tracking
+### 📦 Neue System- & Sicherheitschecks (v1.7)
+- **Windows Features & Rollen** – Installierte Server Rollen per CIM/DISM
+- **.NET Framework Version & DLLs** – Release-Key, Assembly-Versionen
+- **Ausstehende Neustarts** – 6 Prüfmethoden (PendingFileRename, WU, CBS, uvm.)
+- **CPU Throttling Analyse** – CurrentClockSpeed vs MaxClockSpeed
+- **Visual C++ Redistributable** – 32/64-Bit Versionen via Registry
+- **Credential Guard Status** – LsaCfgFlags, Virtualization Based Security
+- **Lokale Administratoren** – Mitglieder via CIM/ADSI
+- **Domain Trusts & Verschlüsselung** – Trust-Typen, SupportedEncryptionTypes
+- **FIP-FS Scan Engine Version** – Anti-Malware Engine, Pattern-Update
+- **Exchange Setting Overrides** – Alle aktiven Overrides dokumentieren
+- **Exchange Server Component State** – Maintenance Mode Erkennung
+- **Security CVE Prüfung** – CVE-2021-34470, CVE-2022-21978
+- **HTTP Proxy Konfiguration** – WinHTTP, Registry, netsh
+- **Installierte Antivirenlösung** – SecurityCenter WMI, Registry, Microsoft Defender Status
+
 ### 📦 Neue Dokumentationsbereiche (v1.6)
 - **Message Queue Analyse** – Status, Nachrichtenanzahl und Retry-Queues pro Transport-Warteschlange
 - **Calendar & Resource Mailbox** – Raum-/Ressourcenpostfächer, AutomateProcessing, BookingWindow
@@ -226,6 +242,20 @@ Das generierte Dokument enthält automatisch:
 ✅ Hybrid-Konfiguration  
 ✅ DLP & Compliance  
 ✅ EEMS-Status  
+✅ **Windows Features & Rollen** (v1.7)  
+✅ **.NET Framework Version & DLLs** (v1.7)  
+✅ **Ausstehende Neustarts** (v1.7)  
+✅ **CPU Throttling Analyse** (v1.7)  
+✅ **Visual C++ Redistributable** (v1.7)  
+✅ **Credential Guard Status** (v1.7)  
+✅ **Lokale Administratoren** (v1.7)  
+✅ **Domain Trusts & Verschlüsselung** (v1.7)  
+✅ **FIP-FS Scan Engine Version** (v1.7)  
+✅ **Exchange Setting Overrides** (v1.7)  
+✅ **Server Component State** (v1.7)  
+✅ **Security CVE Prüfung** (v1.7)  
+✅ **HTTP Proxy Konfiguration** (v1.7)  
+✅ **Installierte Antivirenlösung** (v1.7)  
 
 ---
 

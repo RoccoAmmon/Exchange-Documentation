@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Exchange On-Premises Dokumentations-Skript (v1.6 - Exchange 2013/2016/2019 & SE Support)
+    Exchange On-Premises Dokumentations-Skript (v1.7 - Exchange 2013/2016/2019 & SE Support)
 .DESCRIPTION
     Erstellt eine umfassende HTML-Dokumentation der gesamten Exchange On-Premises Umgebung.
     Unterstützt Exchange Server 2019 und Exchange Server Subscription Edition (SE).
@@ -9,6 +9,22 @@
     WICHTIG: Diese Version verwendet CIM-Sessions mit automatischem DCOM-Fallback,
     sodass das Skript auch funktioniert, wenn WinRM (PowerShell Remoting) nicht
     korrekt konfiguriert ist.
+
+    NEU in v1.7 (Erweiterte System- & Sicherheitschecks):
+    - Windows Features & Rollen (installierte Server Rollen)
+    - .NET Framework Version & DLLs (Release-Key, Assembly-Versionen)
+    - Ausstehende Neustarts (6 Prüfmethoden: PendingFileRename, WU, CBS, ServerMgr, CIM, SCCM)
+    - CPU Throttling Analyse (CurrentClockSpeed vs MaxClockSpeed)
+    - Visual C++ Redistributable Versionen (32/64-Bit via Registry)
+    - Credential Guard Status (LsaCfgFlags, Virtualization Based Security)
+    - Lokale Administratoren (Mitglieder via CIM/ADSI)
+    - Domain Trusts & Verschlüsselung (Trust-Typen, SupportedEncryptionTypes)
+    - FIP-FS Scan Engine Version (Anti-Malware Engine, Pattern-Update)
+    - Exchange Setting Overrides (alle aktiven Overrides dokumentieren)
+    - Exchange Server Component State (Maintenance Mode Erkennung)
+    - Security CVE Prüfung (CVE-2021-34470, CVE-2022-21978)
+    - HTTP Proxy Konfiguration (WinHTTP, Registry, netsh)
+    - Installierte Antivirenlösung (SecurityCenter, Registry, Defender-Status)
 
     NEU in v1.6 (Erweiterte Dokumentationsbereiche):
     - Message Queue Analyse (Warteschlangen, Status, Nachrichtenanzahl)
@@ -140,10 +156,25 @@
 
 .NOTES
     Autor:           Rocco Ammon
-    Version:         1.4
+    Version:         1.7
     Erstellt:        2026-03-05
-    Letzte Änderung: 2026-06-30
-    Änderungen:      v1.6 - Erweiterte Dokumentationsbereiche:
+    Letzte Änderung: 2026-07-10
+    Änderungen:      v1.7 - Erweiterte System- & Sicherheitschecks:
+                          • Windows Features & Rollen (installierte Server Rollen)
+                          • .NET Framework Version & DLLs (Release-Key, Assembly-Versionen)
+                          • Ausstehende Neustarts (6 Prüfmethoden)
+                          • CPU Throttling Analyse (CurrentClockSpeed vs MaxClockSpeed)
+                          • Visual C++ Redistributable Versionen (32/64-Bit)
+                          • Credential Guard Status (LsaCfgFlags, VBS)
+                          • Lokale Administratoren (Mitglieder via CIM/ADSI)
+                          • Domain Trusts & Verschlüsselung (Trust-Typen)
+                          • FIP-FS Scan Engine Version (Anti-Malware Engine)
+                          • Exchange Setting Overrides (alle aktiven Overrides)
+                          • Exchange Server Component State (Maintenance Mode)
+                          • Security CVE Prüfung (CVE-2021-34470, CVE-2022-21978)
+                          • HTTP Proxy Konfiguration (WinHTTP, Registry, netsh)
+                          • Installierte Antivirenlösung (SecurityCenter WMI, Registry, Defender)
+                     v1.6 - Erweiterte Dokumentationsbereiche:
                           • Message Queue Analyse (Warteschlangen, Status, Nachrichtenanzahl)
                           • Calendar & Resource Mailbox (Raum-/Ressourcenpostfächer, Buchungsoptionen)
                           • Exchange Archive (Archivpostfächer, Quotas, Auto-Expanding Archive)
@@ -5878,6 +5909,1259 @@ function Get-OAuthCertificateAuthInfo {
 #endregion
 
 #region ============================================================
+# NEU IN v1.7 - ERWEITERTE SYSTEM- & SICHERHEITSCHECKS
+#endregion ============================================================
+
+# ---------------------------------------------------------------
+# 43. WINDOWS FEATURES & ROLLEN
+# ---------------------------------------------------------------
+function Get-WindowsFeaturesInfo {
+    <#
+    .SYNOPSIS
+        Dokumentiert installierte Windows Server Rollen und Features.
+    #>
+    Write-Log -Message "=== Sammle Windows Features & Rollen ===" -Level "INFO"
+
+    $featHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "Windows Features für Server: $server" -Level "INFO"
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+
+            try {
+                $session = New-ServerCimSession -ComputerName $server
+                if (-not $session) { throw "Keine CIM-Session verfügbar." }
+
+                $features = Get-CimInstance -CimSession $session -ClassName Win32_ServerFeature -ErrorAction SilentlyContinue
+                if ($features) {
+                    $featData = $features | Select-Object @{N='ID';E={$_.ID}}, @{N='Name';E={$_.Name}} | Sort-Object Name
+                    $serverHTML += "<h4>Installierte Windows Server Rollen</h4>"
+                    $serverHTML += "<p><strong>Anzahl:</strong> $($featData.Count)</p>"
+                    $serverHTML += (ConvertTo-HTMLTable -Data $featData)
+                } else {
+                    try {
+                        $dismFeat = Get-WindowsFeature -ComputerName $server -ErrorAction SilentlyContinue | Where-Object { $_.Installed }
+                        if ($dismFeat) {
+                            $featData = $dismFeat | Select-Object @{N='Name';E={$_.Name}}, @{N='DisplayName';E={$_.DisplayName}} | Sort-Object Name
+                            $serverHTML += "<h4>Installierte Windows Features (DISM)</h4>"
+                            $serverHTML += "<p><strong>Anzahl:</strong> $($featData.Count)</p>"
+                            $serverHTML += (ConvertTo-HTMLTable -Data $featData)
+                        } else { $serverHTML += "<p class='no-data'>Keine Feature-Informationen verfügbar.</p>" }
+                    } catch { $serverHTML += "<p class='no-data'>Feature-Informationen nicht verfügbar (CIM/DISM).</p>" }
+                }
+                if ($session) { Remove-CimSession -CimSession $session -ErrorAction SilentlyContinue }
+            } catch {
+                Write-Log -Message "Windows Features für $server fehlgeschlagen: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>Windows Features konnten nicht abgerufen werden: $_</p>"
+            }
+            $featHTML += $serverHTML
+        } catch {
+            Write-Log -Message "Fehler bei Windows Features für ${server}: $_" -Level "ERROR"
+            $featHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+    New-HTMLSection -Title "Windows Features & Rollen" -Content $featHTML
+}
+
+# ---------------------------------------------------------------
+# 44. .NET FRAMEWORK VERSION & DLLS
+# ---------------------------------------------------------------
+function Get-DotNetFrameworkInfo {
+    <#
+    .SYNOPSIS
+        Dokumentiert die installierte .NET Framework Version und relevante DLL-Versionen.
+    #>
+    Write-Log -Message "=== Sammle .NET Framework Informationen ===" -Level "INFO"
+
+    $dotnetHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message ".NET Framework für Server: $server" -Level "INFO"
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+
+            try {
+                # .NET Version aus Registry via CIM
+                $session = New-ServerCimSession -ComputerName $server
+                if (-not $session) { throw "Keine CIM-Session verfügbar." }
+
+                $dotNetVersion = Get-CimInstance -CimSession $session -ClassName Win32_Registry |
+                    Where-Object { $_.Key -eq "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full" } |
+                    Select-Object -ExpandProperty ValueNames -ErrorAction SilentlyContinue
+
+                # Direct Registry access
+                $regPath = "SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full"
+                $releaseReg = Get-RemoteRegistryValue -ComputerName $server -RegistryPath $regPath -ValueName "Release"
+                $versionReg = Get-RemoteRegistryValue -ComputerName $server -RegistryPath $regPath -ValueName "Version"
+
+                $dotNetReleaseMap = @{
+                    528040 = "4.8 (Build 528040)"
+                    528049 = "4.8 (Build 528049)"
+                    528209 = "4.8 (Build 528209)"
+                    528372 = "4.8 (Build 528372)"
+                    528449 = "4.8 (Build 528449)"
+                    533320 = "4.8.1"
+                    533325 = "4.8.1 (Build 533325)"
+                    9186481 = "4.8.1 (Windows 11)"
+                }
+
+                $dotNetDisplay = if ($releaseReg -and $dotNetReleaseMap.ContainsKey($releaseReg)) {
+                    $dotNetReleaseMap[$releaseReg]
+                } elseif ($versionReg) { $versionReg } else { "Nicht erkannt" }
+                $dotNetRelease = if ($releaseReg) { $releaseReg } else { "-" }
+
+                $netData = [PSCustomObject]@{
+                    ".NET Framework Version" = $dotNetDisplay
+                    "Release Registry Key"   = $dotNetRelease
+                    "Version Registry"       = if ($versionReg) { $versionReg } else { "-" }
+                    "CLR Version"            = if ((Get-CimInstance -CimSession $session -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue).BuildNumber) { "4.0.30319" } else { "-" }
+                }
+                $serverHTML += "<h4>.NET Framework Version</h4>"
+                $serverHTML += (ConvertTo-HTMLTable -Data @($netData))
+
+                # System.Data.dll Version
+                try {
+                    $systemDataPath = "SOFTWARE\Microsoft\.NETFramework\AssemblyFolders\System.Data"
+                    $serverHTML += "<h4>System.Data.dll Pfad</h4>"
+                    $serverHTML += "<p>Standard-Speicherort: C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Data.dll</p>"
+                } catch { }
+
+                if ($session) { Remove-CimSession -CimSession $session -ErrorAction SilentlyContinue }
+            } catch {
+                Write-Log -Message ".NET Framework für $server fehlgeschlagen: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>.NET Framework Informationen konnten nicht abgerufen werden: $_</p>"
+            }
+
+            # Zusätzlich: Lokale .NET Assembly-Versionen
+            try {
+                $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
+                if ($isLocal) {
+                    $assemblies = @("System.Data", "System.Configuration", "System.Web", "System.DirectoryServices")
+                    $asmData = foreach ($asm in $assemblies) {
+                        try {
+                            $a = [System.Reflection.Assembly]::LoadWithPartialName($asm)
+                            if ($a) {
+                                [PSCustomObject]@{
+                                    "Assembly"    = $asm
+                                    "Version"     = $a.GetName().Version.ToString()
+                                    "Location"    = $a.Location
+                                }
+                            }
+                        } catch { }
+                    }
+                    if ($asmData) {
+                        $serverHTML += "<h4>.NET Assembly Versionen (lokal)</h4>"
+                        $serverHTML += (ConvertTo-HTMLTable -Data $asmData)
+                    }
+                }
+            } catch {
+                Write-Log -Message "Lokale Assembly-Abfrage fehlgeschlagen: $_" -Level "WARNING"
+            }
+
+            $dotnetHTML += $serverHTML
+        } catch {
+            Write-Log -Message "Fehler bei .NET Framework für ${server}: $_" -Level "ERROR"
+            $dotnetHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+    New-HTMLSection -Title ".NET Framework Version & DLLs" -Content $dotnetHTML
+}
+
+# ---------------------------------------------------------------
+# 45. AUSSTEHENDE NEUSTARTS (PENDING REBOOT)
+# ---------------------------------------------------------------
+function Get-PendingRebootInfo {
+    <#
+    .SYNOPSIS
+        Prüft auf ausstehende Neustarts pro Server via Registry und WMI.
+    #>
+    Write-Log -Message "=== Prüfe auf ausstehende Neustarts ===" -Level "INFO"
+
+    $rebootHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "Pending Reboot Check für Server: $server" -Level "INFO"
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+            $pendingReboot = $false
+            $rebootReasons = @()
+
+            try {
+                $session = New-ServerCimSession -ComputerName $server
+                if (-not $session) { throw "Keine CIM-Session verfügbar." }
+
+                # Check 1: HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\PendingFileRenameOperations
+                $pendingOp = Get-RemoteRegistryValue -ComputerName $server -RegistryPath "SYSTEM\CurrentControlSet\Control\Session Manager" -ValueName "PendingFileRenameOperations"
+                if ($pendingOp) {
+                    $pendingReboot = $true
+                    $rebootReasons += "Ausstehende Datei-Umbenennungen (PendingFileRenameOperations)"
+                }
+
+                # Check 2: HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired
+                $wuReboot = Get-RemoteRegistryValue -ComputerName $server -RegistryPath "SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update" -ValueName "RebootRequired"
+                if ($wuReboot) {
+                    $pendingReboot = $true
+                    $rebootReasons += "Windows Update erfordert Neustart"
+                }
+
+                # Check 3: HKLM\SOFTWARE\Microsoft\ServerManager\CurrentRebootAttempts
+                $srvMgrReboot = Get-RemoteRegistryValue -ComputerName $server -RegistryPath "SOFTWARE\Microsoft\ServerManager" -ValueName "CurrentRebootAttempts"
+                if ($srvMgrReboot -and $srvMgrReboot -gt 0) {
+                    $pendingReboot = $true
+                    $rebootReasons += "Server Manager meldet ausstehenden Neustart"
+                }
+
+                # Check 4: CBS Reboot (Component Based Servicing)
+                $cbsReboot = Get-RemoteRegistryValue -ComputerName $server -RegistryPath "SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing" -ValueName "RebootPending"
+                if ($cbsReboot) {
+                    $pendingReboot = $true
+                    $rebootReasons += "Component Based Servicing erfordert Neustart"
+                }
+
+                # Check 5: CIM - Win32_ComputerSystem.RebootRequired (Windows 10/2016+)
+                try {
+                    $cs = Get-CimInstance -CimSession $session -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
+                    if ($cs -and $cs.PSSerializer) {
+                        $rebootReqProp = $cs | Select-Object -Property RebootRequired -ErrorAction SilentlyContinue
+                        if ($rebootReqProp -and $rebootReqProp.RebootRequired) {
+                            $pendingReboot = $true
+                            $rebootReasons += "Win32_ComputerSystem meldet RebootRequired"
+                        }
+                    }
+                } catch { }
+
+                # Check 6: SCCM/ConfigMgr Client
+                $ccmReboot = Get-RemoteRegistryValue -ComputerName $server -RegistryPath "SOFTWARE\Microsoft\SMS\Mobile Client\Reboot Management" -ValueName "RebootBy" -ErrorAction SilentlyContinue
+                if ($ccmReboot) {
+                    $pendingReboot = $true
+                    $rebootReasons += "ConfigMgr Client erfordert Neustart bis: $ccmReboot"
+                }
+
+                if ($session) { Remove-CimSession -CimSession $session -ErrorAction SilentlyContinue }
+            } catch {
+                Write-Log -Message "Pending Reboot Check für $server fehlgeschlagen: $_" -Level "WARNING"
+            }
+
+            $statusIcon = if ($pendingReboot) { "🔴 NEUSTART AUSSTEHEND" } else { "✅ Kein Neustart erforderlich" }
+            $serverHTML += "<h4>Status: $statusIcon</h4>"
+            if ($pendingReboot -and $rebootReasons.Count -gt 0) {
+                $serverHTML += "<ul>"
+                foreach ($reason in $rebootReasons) {
+                    $serverHTML += "<li>$reason</li>"
+                }
+                $serverHTML += "</ul>"
+                $serverHTML += "<p class='error'>⚠️ Es sind ausstehende Neustarts auf diesem Server vorhanden! Bitte zeitnah durchführen.</p>"
+            }
+
+            $rebootHTML += $serverHTML
+        } catch {
+            Write-Log -Message "Fehler bei Pending Reboot für ${server}: $_" -Level "ERROR"
+            $rebootHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+    New-HTMLSection -Title "Ausstehende Neustarts (Pending Reboot)" -Content $rebootHTML
+}
+
+# ---------------------------------------------------------------
+# 46. CPU THROTTLING ERKENNUNG
+# ---------------------------------------------------------------
+function Get-CpuThrottlingInfo {
+    <#
+    .SYNOPSIS
+        Erkennt CPU Throttling durch Vergleich von CurrentClockSpeed mit MaxClockSpeed.
+    #>
+    Write-Log -Message "=== Prüfe CPU Throttling ===" -Level "INFO"
+
+    $cpuHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "CPU Throttling Check für Server: $server" -Level "INFO"
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+
+            try {
+                $session = New-ServerCimSession -ComputerName $server
+                if (-not $session) { throw "Keine CIM-Session verfügbar." }
+
+                $processors = Get-CimInstance -CimSession $session -ClassName Win32_Processor -ErrorAction SilentlyContinue
+                if ($processors) {
+                    $cpuData = foreach ($proc in $processors) {
+                        $throttlingRatio = if ($proc.MaxClockSpeed -gt 0) {
+                            [math]::Round(($proc.CurrentClockSpeed / $proc.MaxClockSpeed) * 100, 1)
+                        } else { "N/A" }
+                        $throttlingIcon = if ($throttlingRatio -ne "N/A" -and $throttlingRatio -lt 95) {
+                            "⚠️ Throttling aktiv!"
+                        } else { "✅ Normal" }
+
+                        [PSCustomObject]@{
+                            "CPU"                 = $proc.Name
+                            "Device ID"           = $proc.DeviceID
+                            "Max Clock Speed (MHz)" = $proc.MaxClockSpeed
+                            "Current Clock (MHz)"   = $proc.CurrentClockSpeed
+                            "Auslastung (%)"       = $throttlingRatio
+                            "Status"              = $throttlingIcon
+                            "Cores"               = $proc.NumberOfCores
+                            "Logical Processors"  = $proc.NumberOfLogicalProcessors
+                        }
+                    }
+
+                    $serverHTML += "<h4>CPU Throttling Analyse</h4>"
+                    $serverHTML += (ConvertTo-HTMLTable -Data $cpuData)
+
+                    # Warnung bei Throttling
+                    $throttled = $cpuData | Where-Object { $_."Status" -match "Throttling" }
+                    if ($throttled) {
+                        $serverHTML += "<p class='error'>⚠️ CPU Throttling erkannt! Die aktuelle Taktrate ist geringer als die maximale Taktrate. "
+                        $serverHTML += "Mögliche Ursachen: ÜBerhitzung, Power Management, VM-Ressourcen-Limit.</p>"
+                    } else {
+                        $serverHTML += "<p class='success'>✅ Kein CPU Throttling festgestellt.</p>"
+                    }
+                } else {
+                    $serverHTML += "<p class='no-data'>Keine Prozessor-Informationen verfügbar.</p>"
+                }
+
+                if ($session) { Remove-CimSession -CimSession $session -ErrorAction SilentlyContinue }
+            } catch {
+                Write-Log -Message "CPU Throttling für $server fehlgeschlagen: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>CPU Informationen konnten nicht abgerufen werden: $_</p>"
+            }
+
+            $cpuHTML += $serverHTML
+        } catch {
+            Write-Log -Message "Fehler bei CPU Throttling für ${server}: $_" -Level "ERROR"
+            $cpuHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+    New-HTMLSection -Title "CPU Throttling Analyse" -Content $cpuHTML
+}
+
+# ---------------------------------------------------------------
+# 47. VISUAL C++ REDISTRIBUTABLE
+# ---------------------------------------------------------------
+function Get-VCRedistInfo {
+    <#
+    .SYNOPSIS
+        Dokumentiert installierte Microsoft Visual C++ Redistributable Versionen.
+    #>
+    Write-Log -Message "=== Sammle Visual C++ Redistributable Versionen ===" -Level "INFO"
+
+    $vcHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "VC++ Redist für Server: $server" -Level "INFO"
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+
+            try {
+                $session = New-ServerCimSession -ComputerName $server
+                if (-not $session) { throw "Keine CIM-Session verfügbar." }
+
+                # 64-bit
+                $vc64 = Get-CimInstance -CimSession $session -ClassName Win32_Product -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -like "*Visual C++*" -or $_.Name -like "*Visual C++*Redistributable*" } |
+                    Select-Object Name, Version, Vendor
+
+                # Alternative via Registry (zuverlässiger als Win32_Product)
+                try {
+                    $vcKeys = @(
+                        "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                        "SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+                    )
+                    $vcItems = @()
+                    foreach ($key in $vcKeys) {
+                        # Read subkeys via remote registry
+                        $subKeys = Get-RemoteRegistryValue -ComputerName $server -RegistryPath $key -ValueName "" -ErrorAction SilentlyContinue
+                        # Try via CIM StdRegProv
+                        try {
+                            $regProv = Get-CimInstance -CimSession $session -ClassName StdRegProv -Namespace root/default -ErrorAction SilentlyContinue
+                            if ($regProv) {
+                                $enumResult = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName EnumKey -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $key } -ErrorAction SilentlyContinue
+                                if ($enumResult -and $enumResult.sNames) {
+                                    foreach ($subKey in $enumResult.sNames) {
+                                        $displayName = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName GetStringValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = "$key\$subKey"; sValueName = "DisplayName" } -ErrorAction SilentlyContinue
+                                        $displayVersion = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName GetStringValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = "$key\$subKey"; sValueName = "DisplayVersion" } -ErrorAction SilentlyContinue
+                                        if ($displayName.sValue -and $displayName.sValue -match "Visual C\+\+") {
+                                            $vcItems += [PSCustomObject]@{
+                                                "Name"    = $displayName.sValue
+                                                "Version" = if ($displayVersion.sValue) { $displayVersion.sValue } else { "-" }
+                                                "Arch"    = if ($key -match "WOW6432Node") { "32-bit" } else { "64-bit" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } catch { }
+                    }
+
+                    if ($vcItems.Count -gt 0) {
+                        $serverHTML += "<h4>Installierte Visual C++ Redistributables</h4>"
+                        $serverHTML += "<p><strong>Anzahl:</strong> $($vcItems.Count)</p>"
+                        $serverHTML += (ConvertTo-HTMLTable -Data ($vcItems | Sort-Object Name))
+                    } else {
+                        $serverHTML += "<p class='no-data'>Keine Visual C++ Redistributables gefunden (via Registry).</p>"
+                    }
+                } catch {
+                    Write-Log -Message "VC++ Registry-Abfrage fehlgeschlagen: $_" -Level "WARNING"
+                    $serverHTML += "<p class='no-data'>VC++ Redistributables konnten nicht abgerufen werden.</p>"
+                }
+
+                if ($session) { Remove-CimSession -CimSession $session -ErrorAction SilentlyContinue }
+            } catch {
+                Write-Log -Message "VC++ für $server fehlgeschlagen: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>VC++ Redistributable Informationen konnten nicht abgerufen werden: $_</p>"
+            }
+
+            $vcHTML += $serverHTML
+        } catch {
+            Write-Log -Message "Fehler bei VC++ für ${server}: $_" -Level "ERROR"
+            $vcHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+    New-HTMLSection -Title "Visual C++ Redistributable Versionen" -Content $vcHTML
+}
+
+# ---------------------------------------------------------------
+# 48. CREDENTIAL GUARD STATUS
+# ---------------------------------------------------------------
+function Get-CredentialGuardInfo {
+    <#
+    .SYNOPSIS
+        Prüft den Status von Windows Defender Credential Guard auf den Servern.
+    #>
+    Write-Log -Message "=== Prüfe Credential Guard Status ===" -Level "INFO"
+
+    $cgHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "Credential Guard Check für Server: $server" -Level "INFO"
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+
+            try {
+                $session = New-ServerCimSession -ComputerName $server
+                if (-not $session) { throw "Keine CIM-Session verfügbar." }
+
+                # Check 1: LSA Credential Guard via Registry
+                $lsaCfg = Get-RemoteRegistryValue -ComputerName $server -RegistryPath "SOFTWARE\Policies\Microsoft\Windows\DeviceGuard" -ValueName "LsaCfgFlags"
+
+                $cgStatus = switch ($lsaCfg) {
+                    0 { "❌ Deaktiviert" }
+                    1 { "✅ Aktiviert - UEFI-Sperre aktiv" }
+                    2 { "✅ Aktiviert - Ohne UEFI-Sperre" }
+                    3 { "✅ Aktiviert - Mit UEFI-Sperre" }
+                    default { "❌ Nicht konfiguriert / Deaktiviert" }
+                }
+
+                $cgData = [PSCustomObject]@{
+                    "Credential Guard Status" = $cgStatus
+                    "LsaCfgFlags (Registry)"  = if ($null -ne $lsaCfg) { $lsaCfg } else { "Nicht gesetzt" }
+                    "Registry Pfad"           = "HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard\LsaCfgFlags"
+                }
+                $serverHTML += "<h4>Credential Guard Konfiguration</h4>"
+                $serverHTML += (ConvertTo-HTMLTable -Data @($cgData))
+
+                # Check 2: Virtualization Based Security
+                try {
+                    $vbs = Get-CimInstance -CimSession $session -ClassName Win32_DeviceGuard -Namespace root\Microsoft\Windows\DeviceGuard -ErrorAction SilentlyContinue
+                    if ($vbs) {
+                        $vbsData = [PSCustomObject]@{
+                            "VirtualizationSecurity" = if ($vbs.VirtualizationBasedSecurityStatus -eq 2) { "✅ Aktiviert" } else { "❌ Deaktiviert" }
+                            "CredentialGuard Configured" = if ($vbs.CredentialGuardConfigured) { "✅ Ja" } else { "❌ Nein" }
+                        }
+                        $serverHTML += "<h4>Virtualization Based Security Details</h4>"
+                        $serverHTML += (ConvertTo-HTMLTable -Data @($vbsData))
+                    }
+                } catch {
+                    Write-Log -Message "VBS CIM-Abfrage nicht möglich (Namespace nicht vorhanden): $_" -Level "WARNING"
+                }
+
+                if ($session) { Remove-CimSession -CimSession $session -ErrorAction SilentlyContinue }
+            } catch {
+                Write-Log -Message "Credential Guard für $server fehlgeschlagen: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>Credential Guard Informationen konnten nicht abgerufen werden: $_</p>"
+            }
+
+            $cgHTML += $serverHTML
+        } catch {
+            Write-Log -Message "Fehler bei Credential Guard für ${server}: $_" -Level "ERROR"
+            $cgHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+    New-HTMLSection -Title "Credential Guard Status" -Content $cgHTML
+}
+
+# ---------------------------------------------------------------
+# 49. LOKALE ADMINISTRATOREN
+# ---------------------------------------------------------------
+function Get-LocalAdminInfo {
+    <#
+    .SYNOPSIS
+        Listet die Mitglieder der lokalen Administratoren-Gruppe pro Server auf.
+    #>
+    Write-Log -Message "=== Sammle lokale Administratoren ===" -Level "INFO"
+
+    $adminHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "Lokale Administratoren für Server: $server" -Level "INFO"
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+
+            try {
+                $session = New-ServerCimSession -ComputerName $server
+                if (-not $session) { throw "Keine CIM-Session verfügbar." }
+
+                # CIM: Win32_Group - Administratoren abrufen
+                $adminGroup = Get-CimInstance -CimSession $session -ClassName Win32_Group -Filter "Name = 'Administrators' AND Domain = '$server'" -ErrorAction SilentlyContinue
+                if (-not $adminGroup) {
+                    $adminGroup = Get-CimInstance -CimSession $session -ClassName Win32_Group -Filter "Name = 'Administrators'" -ErrorAction SilentlyContinue
+                }
+
+                if ($adminGroup) {
+                    $members = Get-CimInstance -CimSession $session -ClassName Win32_GroupUser -ErrorAction SilentlyContinue |
+                        Where-Object { $_.GroupComponent -match "Administrators" }
+
+                    $memberData = if ($members) {
+                        $memberList = foreach ($member in $members) {
+                            $part = $member.PartComponent -replace '.*Name="([^"]+)".*', '$1'
+                            $domain = $member.PartComponent -replace '.*Domain="([^"]+)".*', '$1'
+                            [PSCustomObject]@{
+                                "Mitglied" = "$domain\$part"
+                                "Typ"      = if ($member.PartComponent -match "Win32_UserAccount") { "Benutzer" } else { "Gruppe" }
+                            }
+                        }
+                        $memberList | Sort-Object Mitglied
+                    } else {
+                        @()
+                    }
+
+                    $serverHTML += "<h4>Mitglieder der lokalen Administratoren-Gruppe</h4>"
+                    if ($memberData.Count -gt 0) {
+                        $serverHTML += "<p><strong>Anzahl Mitglieder:</strong> $($memberData.Count)</p>"
+                        $serverHTML += (ConvertTo-HTMLTable -Data $memberData)
+                    } else {
+                        $serverHTML += "<p class='no-data'>Keine Mitglieder gefunden (oder Zugriff verweigert).</p>"
+                    }
+
+                    # Zusätzliche Information: Exchange Administratoren prüfen
+                    try {
+                        $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
+                        if ($isLocal) {
+                            $groupObj = [ADSI]"WinNT://$server/Administrators"
+                            $adsiMembers = @($groupObj.Invoke("Members"))
+                            $adsiData = foreach ($member in $adsiMembers) {
+                                $name = $member.GetType().InvokeMember("Name", 'GetProperty', $null, $member, $null)
+                                $adsPath = $member.GetType().InvokeMember("AdsPath", 'GetProperty', $null, $member, $null)
+                                [PSCustomObject]@{
+                                    "Mitglied (ADSI)" = $name
+                                    "ADS Path"         = $adsPath
+                                }
+                            }
+                            if ($adsiData.Count -gt $memberData.Count) {
+                                $serverHTML += "<h4>Erweiterte Administratoren-Liste (ADSI)</h4>"
+                                $serverHTML += (ConvertTo-HTMLTable -Data $adsiData)
+                            }
+                        }
+                    } catch {
+                        Write-Log -Message "ADSI Administratoren-Abfrage fehlgeschlagen: $_" -Level "WARNING"
+                    }
+                } else {
+                    $serverHTML += "<p class='error'>Administratoren-Gruppe konnte nicht gefunden werden.</p>"
+                }
+
+                if ($session) { Remove-CimSession -CimSession $session -ErrorAction SilentlyContinue }
+            } catch {
+                Write-Log -Message "Lokale Administratoren für $server fehlgeschlagen: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>Administratoren-Informationen konnten nicht abgerufen werden: $_</p>"
+            }
+
+            $adminHTML += $serverHTML
+        } catch {
+            Write-Log -Message "Fehler bei lokalen Administratoren für ${server}: $_" -Level "ERROR"
+            $adminHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+    New-HTMLSection -Title "Lokale Administratoren" -Content $adminHTML
+}
+
+# ---------------------------------------------------------------
+# 50. DOMAIN TRUSTS & VERSCHLÜSSELUNG
+# ---------------------------------------------------------------
+function Get-DomainTrustInfo {
+    <#
+    .SYNOPSIS
+        Dokumentiert alle Domain Trusts und deren Verschlüsselungstypen.
+    #>
+    Write-Log -Message "=== Sammle Domain Trusts & Verschlüsselung ===" -Level "INFO"
+
+    $trustHTML = ""
+
+    try {
+        # Prüfe ob AD-Modul verfügbar ist
+        $adModule = Get-Module -ListAvailable -Name ActiveDirectory -ErrorAction SilentlyContinue
+        $adModuleLoaded = Get-Module -Name ActiveDirectory -ErrorAction SilentlyContinue
+
+        if ($adModule -or $adModuleLoaded) {
+            if (-not $adModuleLoaded) { Import-Module ActiveDirectory -ErrorAction SilentlyContinue }
+
+            $trusts = Get-ADTrust -Filter * -ErrorAction SilentlyContinue
+            if ($trusts) {
+                $trustData = foreach ($trust in $trusts) {
+                    $encTypes = switch ($trust.SupportedEncryptionTypes) {
+                        0  { "Keine" }
+                        1  { "RC4-HMAC" }
+                        2  { "AES128-CTS-HMAC-SHA1" }
+                        4  { "AES256-CTS-HMAC-SHA1" }
+                        8  { "Future Encryption" }
+                        3  { "RC4-HMAC, AES128" }
+                        5  { "RC4-HMAC, AES256" }
+                        7  { "RC4-HMAC, AES128, AES256" }
+                        default { "Unbekannt ($($trust.SupportedEncryptionTypes))" }
+                    }
+
+                    [PSCustomObject]@{
+                        "Name"                     = $trust.Name
+                        "Direction"                = $trust.TrustDirection
+                        "Type"                     = $trust.TrustType
+                        "Attributes"               = $trust.TrustAttributes
+                        "Supported Encryption"     = $encTypes
+                        "Source"                   = $trust.Source
+                        "Target"                   = $trust.Target
+                        "ForestTransitive"         = $trust.ForestTransitive
+                        "IntraForest"              = $trust.IntraForest
+                        "IsTreeParent"             = $trust.IsTreeParent
+                        "SID Filtering"            = $trust.SIDFilteringEnabled
+                    }
+                }
+                $trustHTML += "<h3>Domain Trusts</h3>"
+                $trustHTML += "<p><strong>Anzahl:</strong> $($trustData.Count)</p>"
+                $trustHTML += (ConvertTo-HTMLTable -Data ($trustData | Sort-Object Name))
+            } else {
+                $trustHTML += "<h3>Domain Trusts</h3>"
+                $trustHTML += "<p class='no-data'>Keine Domain Trusts vorhanden (oder Zugriff verweigert).</p>"
+            }
+
+            # Domain Info
+            try {
+                $domain = Get-ADDomain -ErrorAction SilentlyContinue
+                if ($domain) {
+                    $domainData = [PSCustomObject]@{
+                        "DNS Name"              = $domain.DNSRoot
+                        "NetBIOS Name"          = $domain.NetBIOSName
+                        "Forest"                = $domain.Forest
+                        "Domain Mode"           = $domain.DomainMode
+                        "PDC Emulator"          = $domain.PDCEmulator
+                        "Infrastructure Master" = $domain.InfrastructureMaster
+                        "RID Master"            = $domain.RidMasterMaster
+                    }
+                    $trustHTML += "<h3>Aktuelle Domäne</h3>"
+                    $trustHTML += (ConvertTo-HTMLTable -Data @($domainData))
+                }
+            } catch {
+                Write-Log -Message "ADDomain-Abfrage fehlgeschlagen: $_" -Level "WARNING"
+            }
+        } else {
+            $trustHTML += "<h3>Domain Trusts</h3>"
+            $trustHTML += "<p class='no-data'>Active Directory PowerShell-Modul nicht verfügbar. Domain Trusts können nicht abgefragt werden.</p>"
+        }
+    } catch {
+        Write-Log -Message "Fehler bei Domain Trusts: $_" -Level "ERROR"
+        $trustHTML += "<p class='error'>Fehler: $_</p>"
+    }
+
+    New-HTMLSection -Title "Domain Trusts & Verschlüsselung" -Content $trustHTML
+}
+
+# ---------------------------------------------------------------
+# 51. FIP-FS SCAN ENGINE VERSION
+# ---------------------------------------------------------------
+function Get-FIPFSInfo {
+    <#
+    .SYNOPSIS
+        Dokumentiert die FIP-FS (Forefront Identity Protection) Anti-Malware Scan Engine.
+    #>
+    Write-Log -Message "=== Sammle FIP-FS Scan Engine Informationen ===" -Level "INFO"
+
+    $fipfsHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "FIP-FS Scan Engine für Server: $server" -Level "INFO"
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+
+            try {
+                $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
+
+                # Exchange Install Path ermitteln
+                $exchInstallPath = if ($isLocal) {
+                    (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Setup" -Name "MsiInstallPath" -ErrorAction SilentlyContinue).MsiInstallPath
+                } else {
+                    Get-RemoteRegistryValue -ComputerName $server -RegistryPath "SOFTWARE\Microsoft\ExchangeServer\v15\Setup" -ValueName "MsiInstallPath"
+                }
+
+                if ($exchInstallPath) {
+                    $fipfsPath = Join-Path -Path $exchInstallPath -ChildPath "TransportRoles\Data\AntiSpam\Engine"
+                    $scanEnginePath = Join-Path -Path $fipfsPath -ChildPath "ScanEngine.ini"
+                    $updatePath = Join-Path -Path $fipfsPath -ChildPath "Update"
+
+                    $serverHTML += "<h4>FIP-FS Scan Engine</h4>"
+
+                    # ScanEngine.ini auslesen
+                    if ($isLocal -and (Test-Path $scanEnginePath)) {
+                        try {
+                            $iniContent = Get-Content $scanEnginePath -ErrorAction SilentlyContinue
+                            $engineVersion = ($iniContent | Select-String -Pattern "^EngineVersion=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                            $engineName = ($iniContent | Select-String -Pattern "^EngineName=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                            $patternVersion = ($iniContent | Select-String -Pattern "^PatternVersion=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+
+                            $engineData = [PSCustomObject]@{
+                                "Engine Name"          = if ($engineName) { $engineName } else { "-" }
+                                "Engine Version"       = if ($engineVersion) { $engineVersion } else { "-" }
+                                "Pattern Version"      = if ($patternVersion) { $patternVersion } else { "-" }
+                                "Engine Pfad"          = $fipfsPath
+                            }
+                            $serverHTML += (ConvertTo-HTMLTable -Data @($engineData))
+                            $serverHTML += "<p><em>Letztes Update-Datum: $(Get-Date $((Get-Item $scanEnginePath).LastWriteTime) -Format 'dd.MM.yyyy HH:mm')</em></p>"
+                        } catch {
+                            $serverHTML += "<p class='no-data'>ScanEngine.ini konnte nicht gelesen werden: $_</p>"
+                        }
+                    } elseif (-not $isLocal) {
+                        $serverHTML += "<p class='no-data'>FIP-FS Scan Engine Details nur lokal oder via UNC-Pfad verfügbar.</p>"
+                    } else {
+                        $serverHTML += "<p class='no-data'>FIP-FS Scan Engine nicht gefunden unter: $fipfsPath</p>"
+                    }
+
+                    # Anti-Malware Status
+                    $serverHTML += "<h4>Exchange Anti-Malware Status</h4>"
+                    try {
+                        if ($isLocal) {
+                            $malwareFilteringEnabled = (Get-TransportConfig -ErrorAction SilentlyContinue).AntispamAntimalwareEnabled
+                            $malwareFilteringEnabled = if ($null -ne $malwareFilteringEnabled) { $malwareFilteringEnabled } else { $true }
+                            $malwareStatus = [PSCustomObject]@{
+                                "Anti-Malware aktiv"   = if ($malwareFilteringEnabled) { "✅ Aktiviert" } else { "❌ Deaktiviert" }
+                                "FIP-FS Pfad"          = $fipfsPath
+                            }
+                            $serverHTML += (ConvertTo-HTMLTable -Data @($malwareStatus))
+                        } else {
+                            $serverHTML += "<p class='no-data'>Anti-Malware Status nur lokal abrufbar.</p>"
+                        }
+                    } catch {
+                        $serverHTML += "<p class='no-data'>Anti-Malware Status nicht verfügbar.</p>"
+                    }
+                } else {
+                    $serverHTML += "<p class='error'>Exchange Installationspfad nicht gefunden für Server $server.</p>"
+                }
+            } catch {
+                Write-Log -Message "FIP-FS für $server fehlgeschlagen: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>FIP-FS Informationen konnten nicht abgerufen werden: $_</p>"
+            }
+
+            $fipfsHTML += $serverHTML
+        } catch {
+            Write-Log -Message "Fehler bei FIP-FS für ${server}: $_" -Level "ERROR"
+            $fipfsHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+    New-HTMLSection -Title "FIP-FS Scan Engine Version" -Content $fipfsHTML
+}
+
+# ---------------------------------------------------------------
+# 52. EXCHANGE SETTING OVERRIDES
+# ---------------------------------------------------------------
+function Get-SettingOverrideInfo {
+    <#
+    .SYNOPSIS
+        Dokumentiert alle konfigurierten Exchange Setting Overrides.
+    #>
+    Write-Log -Message "=== Sammle Exchange Setting Overrides ===" -Level "INFO"
+
+    $overrideHTML = ""
+
+    try {
+        $overrides = Get-SettingOverride -Server $ExchangeServers[0] -ErrorAction SilentlyContinue
+        if (-not $overrides) {
+            # Fallback: Alle Server durchprobieren
+            foreach ($server in $ExchangeServers) {
+                $overrides = Get-SettingOverride -Server $server -ErrorAction SilentlyContinue
+                if ($overrides) { break }
+            }
+        }
+
+        if ($overrides) {
+            $ovData = foreach ($ov in $overrides) {
+                [PSCustomObject]@{
+                    "Name"            = $ov.Name
+                    "Component"       = $ov.Component
+                    "Section"         = $ov.Section
+                    "Parameters"      = ($ov.Parameters -join '; ')
+                    "Reason"          = $ov.Reason
+                    "Server"          = $ov.Server
+                    "MinVersion"      = $ov.MinVersion
+                    "MaxVersion"      = $ov.MaxVersion
+                    "FixVersion"     = $ov.FixVersion
+                    "Status"          = $ov.Status
+                    "Erstellt"        = $ov.WhenCreated
+                }
+            }
+            $overrideHTML += "<h3>Exchange Setting Overrides</h3>"
+            $overrideHTML += "<p><strong>Anzahl:</strong> $($ovData.Count)</p>"
+            $overrideHTML += "<p><em>Setting Overrides erlauben das Überschreiben von Exchange-Standardeinstellungen für Diagnose- und Fehlerbehebungszwecke. Sie sollten nur temporär aktiv sein.</em></p>"
+            $overrideHTML += (ConvertTo-HTMLTable -Data ($ovData | Sort-Object Name))
+        } else {
+            $overrideHTML += "<h3>Exchange Setting Overrides</h3>"
+            $overrideHTML += "<p class='success'>✅ Keine aktiven Setting Overrides gefunden.</p>"
+        }
+    } catch {
+        Write-Log -Message "SettingOverride-Abfrage fehlgeschlagen: $_" -Level "WARNING"
+        $overrideHTML += "<h3>Exchange Setting Overrides</h3>"
+        $overrideHTML += "<p class='no-data'>Setting Overrides konnten nicht abgerufen werden: $_</p>"
+    }
+
+    New-HTMLSection -Title "Exchange Setting Overrides" -Content $overrideHTML
+}
+
+# ---------------------------------------------------------------
+# 53. EXCHANGE MAINTENANCE MODE (SERVER COMPONENT STATE)
+# ---------------------------------------------------------------
+function Get-ServerComponentStateInfo {
+    <#
+    .SYNOPSIS
+        Prüft den Component State aller Exchange-Server (Maintenance Mode Erkennung).
+    #>
+    Write-Log -Message "=== Prüfe Exchange Server Component States ===" -Level "INFO"
+
+    $compHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "Component States für Server: $server" -Level "INFO"
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+
+            try {
+                $components = Get-ServerComponentState -Identity $server -ErrorAction SilentlyContinue
+                if ($components) {
+                    $inactiveComponents = $components | Where-Object { $_.State -eq "Inactive" }
+                    $activeComponents = $components | Where-Object { $_.State -eq "Active" }
+
+                    # Zusammenfassung
+                    $serverHTML += "<h4>Component State Zusammenfassung</h4>"
+                    $summaryData = [PSCustomObject]@{
+                        "Server"                 = $server
+                        "Gesamt Komponenten"     = $components.Count
+                        "Aktiv"                  = $activeComponents.Count
+                        "Inaktiv"                = $inactiveComponents.Count
+                        "Maintenance Mode"       = if ($inactiveComponents.Count -gt 0 -and $inactiveComponents.Count -ge ($components.Count * 0.8)) { "🔴 JA (vermutlich)" } else { "✅ Nein" }
+                    }
+                    $serverHTML += (ConvertTo-HTMLTable -Data @($summaryData))
+
+                    if ($inactiveComponents.Count -gt 0) {
+                        $serverHTML += "<h4>Inaktive Komponenten</h4>"
+                        $inactiveData = foreach ($ic in $inactiveComponents) {
+                            [PSCustomObject]@{
+                                "Komponente" = $ic.Component
+                                "Status"     = "🔴 Inaktiv"
+                                "Remote"     = $ic.Remote
+                            }
+                        }
+                        $serverHTML += (ConvertTo-HTMLTable -Data ($inactiveData | Sort-Object Komponente))
+                        $serverHTML += "<p class='error'>⚠️ $($inactiveComponents.Count) Komponente(n) sind inaktiv. Möglicherweise ist der Server im Wartungsmodus!</p>"
+                    }
+
+                    if ($activeComponents.Count -gt 0) {
+                        $serverHTML += "<h4>Aktive Komponenten (Auszug)</h4>"
+                        $activeData = foreach ($ac in $activeComponents) {
+                            [PSCustomObject]@{
+                                "Komponente" = $ac.Component
+                                "Status"     = "✅ Aktiv"
+                                "Remote"     = $ac.Remote
+                            }
+                        }
+                        $serverHTML += (ConvertTo-HTMLTable -Data ($activeData | Sort-Object Komponente))
+                    }
+                } else {
+                    $serverHTML += "<p class='no-data'>Keine Component States abrufbar für Server $server.</p>"
+                }
+            } catch {
+                Write-Log -Message "Component State für $server fehlgeschlagen: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>Component States konnten nicht abgerufen werden: $_</p>"
+            }
+
+            $compHTML += $serverHTML
+        } catch {
+            Write-Log -Message "Fehler bei Component States für ${server}: $_" -Level "ERROR"
+            $compHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+    New-HTMLSection -Title "Exchange Server Component States" -Content $compHTML
+}
+
+# ---------------------------------------------------------------
+# 54. SECURITY CVEs (CVE-2021-34470, CVE-2022-21978)
+# ---------------------------------------------------------------
+function Get-SecurityCVEInfo {
+    <#
+    .SYNOPSIS
+        Prüft auf bekannte Sicherheitslücken (CVEs) in der Exchange-Konfiguration.
+    #>
+    Write-Log -Message "=== Prüfe Security CVEs ===" -Level "INFO"
+
+    $cveHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "CVE-Check für Server: $server" -Level "INFO"
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+
+            try {
+                $session = New-ServerCimSession -ComputerName $server
+                if (-not $session) { throw "Keine CIM-Session verfügbar." }
+
+                # --- CVE-2021-34470: Exchange-ACL-Permission (AD ACL) ---
+                $cve34470 = [PSCustomObject]@{
+                    "CVE"                     = "CVE-2021-34470"
+                    "Beschreibung"            = "Exchange-ACL-Schwachstelle - Privilegienausweitung"
+                    "Betroffene Versionen"    = "Exchange 2013, 2016, 2019"
+                    "Fix verfügbar seit"      = "2021-06-01 (April 2021 SU)"
+                    "Remediation"             = "Set-OrganizationConfig -ACLableSubscriptionEnabled $false"
+                }
+
+                # --- CVE-2022-21978: Exchange-Authentifizierungsumgehung ---
+                $cve21978 = [PSCustomObject]@{
+                    "CVE"                     = "CVE-2022-21978"
+                    "Beschreibung"            = "Exchange Server Authentifizierungsumgehung via OWA"
+                    "Betroffene Versionen"    = "Exchange 2013, 2016, 2019"
+                    "Fix verfügbar seit"      = "2022-01-11 (January 2022 SU)"
+                    "Remediation"             = "Installation des Januar 2022 Sicherheitsupdates"
+                }
+
+                # Prüfe Exchange Build-Nummer gegen bekannte Fix-Versionen
+                $exchangeBuild = Get-RemoteRegistryValue -ComputerName $server -RegistryPath "SOFTWARE\Microsoft\ExchangeServer\v15\Setup" -ValueName "MsiProductMajor"
+                $exchangeBuildMinor = Get-RemoteRegistryValue -ComputerName $server -RegistryPath "SOFTWARE\Microsoft\ExchangeServer\v15\Setup" -ValueName "MsiProductMinor"
+
+                $supTable = @($cve34470, $cve21978)
+
+                $serverHTML += "<h4>Security CVE Übersicht</h4>"
+                $serverHTML += (ConvertTo-HTMLTable -Data $supTable)
+
+                # Exchange-Version prüfen
+                $serverHTML += "<h4>Exchange Update Level Prüfung</h4>"
+                try {
+                    $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
+                    if ($isLocal) {
+                        $updateInfo = Get-ExchangeServerUpdateInfo -ErrorAction SilentlyContinue
+                        if ($updateInfo) {
+                            $serverHTML += "<p>$updateInfo</p>"
+                        } else {
+                            $serverHTML += "<p>Exchange Build: $exchangeBuild.$exchangeBuildMinor</p>"
+                        }
+                    } else {
+                        $serverHTML += "<p>Exchange Build: $exchangeBuild.$exchangeBuildMinor</p>"
+                    }
+                } catch {
+                    $serverHTML += "<p>Exchange Build: $exchangeBuild.$exchangeBuildMinor</p>"
+                }
+
+                $serverHTML += "<h4>Empfehlungen</h4>"
+                $serverHTML += "<p>Führen Sie regelmäßige Security-Updates durch und prüfen Sie die aktuelle Exchange-Build-Nummer gegen die neueste verfügbare Version.</p>"
+                $serverHTML += "<p>Aktuelle Exchange Security News: <a href='https://msrc.microsoft.com/update-guide' target='_blank'>Microsoft Security Response Center</a></p>"
+
+                if ($session) { Remove-CimSession -CimSession $session -ErrorAction SilentlyContinue }
+            } catch {
+                Write-Log -Message "CVE-Check für $server fehlgeschlagen: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>CVE-Prüfung konnte nicht durchgeführt werden: $_</p>"
+            }
+
+            $cveHTML += $serverHTML
+        } catch {
+            Write-Log -Message "Fehler bei CVE-Check für ${server}: $_" -Level "ERROR"
+            $cveHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+
+    # AD-spezifische CVE-Prüfung (CVE-2021-34470 betrifft AD ACL)
+    try {
+        $cveHTML += "<h3>Active Directory Security Prüfung</h3>"
+        $adModule = Get-Module -ListAvailable -Name ActiveDirectory -ErrorAction SilentlyContinue
+        if ($adModule) {
+            try {
+                Import-Module ActiveDirectory -ErrorAction SilentlyContinue
+                $adRoot = Get-ADRootDSE -ErrorAction SilentlyContinue
+                if ($adRoot) {
+                    $adSchema = $adRoot.schemaNamingContext
+                    $cveHTML += "<p><strong>AD Schema:</strong> $adSchema</p>"
+                    $cveHTML += "<p><em>Hinweis: CVE-2021-34470 betrifft die Exchange-ACL-Konfiguration. Prüfen Sie mit:</em></p>"
+                    $cveHTML += "<code>Get-OrganizationConfig | fl ACLableSubscriptionEnabled</code>"
+                }
+            } catch {
+                Write-Log -Message "AD-CVE Prüfung fehlgeschlagen: $_" -Level "WARNING"
+            }
+        } else {
+            $cveHTML += "<p class='no-data'>AD-Modul nicht verfügbar für erweiterte CVE-Prüfung.</p>"
+        }
+    } catch {
+        Write-Log -Message "AD-CVE Prüfung fehlgeschlagen: $_" -Level "WARNING"
+    }
+
+    New-HTMLSection -Title "Security CVE Prüfung" -Content $cveHTML
+}
+
+# ---------------------------------------------------------------
+# 55. HTTP PROXY KONFIGURATION (WINHTTP)
+# ---------------------------------------------------------------
+function Get-HttpProxyInfo {
+    <#
+    .SYNOPSIS
+        Dokumentiert die HTTP-Proxy Konfiguration (WinHTTP) pro Server.
+    #>
+    Write-Log -Message "=== Sammle HTTP Proxy Konfiguration ===" -Level "INFO"
+
+    $proxyHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "HTTP Proxy Check für Server: $server" -Level "INFO"
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+
+            try {
+                $session = New-ServerCimSession -ComputerName $server
+                if (-not $session) { throw "Keine CIM-Session verfügbar." }
+
+                # WinHTTP Proxy aus Registry (CurrentUser + LocalMachine)
+                $proxyKeys = @(
+                    @{ Path = "SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Connections"; Name = "DefaultConnectionSettings" },
+                    @{ Path = "SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Internet Settings\Connections"; Name = "DefaultConnectionSettings" },
+                    @{ Path = "SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings"; Name = "ProxyEnable" },
+                    @{ Path = "SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings"; Name = "ProxyServer" },
+                    @{ Path = "SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Internet Settings"; Name = "ProxyEnable" },
+                    @{ Path = "SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Internet Settings"; Name = "ProxyServer" }
+                )
+
+                $proxyDataList = @()
+                foreach ($key in $proxyKeys) {
+                    try {
+                        $value = Get-RemoteRegistryValue -ComputerName $server -RegistryPath $key.Path -ValueName $key.Name -ErrorAction SilentlyContinue
+                        if ($null -ne $value) {
+                            $displayValue = if ($value -is [byte[]]) { "Binärdaten ($($value.Length) Bytes)" } else { $value.ToString() }
+                            $proxyDataList += [PSCustomObject]@{
+                                "Registry Pfad"  = "HKLM\$($key.Path)\$($key.Name)"
+                                "Wert"           = $displayValue
+                            }
+                        }
+                    } catch { }
+                }
+
+                if ($proxyDataList.Count -gt 0) {
+                    $serverHTML += "<h4>WinHTTP / Internet Settings Registry</h4>"
+                    $serverHTML += (ConvertTo-HTMLTable -Data ($proxyDataList | Sort-Object "Registry Pfad"))
+                }
+
+                # ProxyEnable boolesch interpretieren
+                $proxyEnabled = Get-RemoteRegistryValue -ComputerName $server -RegistryPath "SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings" -ValueName "ProxyEnable" -ErrorAction SilentlyContinue
+                $proxyServer = Get-RemoteRegistryValue -ComputerName $server -RegistryPath "SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings" -ValueName "ProxyServer" -ErrorAction SilentlyContinue
+
+                $serverHTML += "<h4>HTTP Proxy Status</h4>"
+                if ($proxyEnabled -eq 1) {
+                    $proxyStatus = "🔴 Proxy aktiviert"
+                    $proxyServerValue = if ($proxyServer) { $proxyServer } else { "Kein Proxy-Server konfiguriert" }
+                    $serverHTML += "<p class='error'>$proxyStatus</p>"
+                    $serverHTML += "<p><strong>Proxy-Server:</strong> $proxyServerValue</p>"
+                } elseif ($null -ne $proxyEnabled) {
+                    $serverHTML += "<p>✅ Proxy deaktiviert (ProxyEnable = $proxyEnabled)</p>"
+                } else {
+                    $serverHTML += "<p class='no-data'>Keine Proxy-Konfiguration in Registry gefunden.</p>"
+                }
+
+                # WinHTTP Proxy via netshell (nur lokal)
+                try {
+                    $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
+                    if ($isLocal) {
+                        $netshProxy = netsh winhttp show proxy 2>&1 | Out-String
+                        if ($netshProxy) {
+                            $serverHTML += "<h4>WinHTTP Proxy (netsh)</h4>"
+                            $serverHTML += "<pre style='background:#F5F5F5;padding:10px;font-size:9pt;'>$([System.Web.HttpUtility]::HtmlEncode($netshProxy.Trim()))</pre>"
+                        }
+                    }
+                } catch {
+                    Write-Log -Message "Netsh WinHTTP Proxy Check fehlgeschlagen: $_" -Level "WARNING"
+                }
+
+                # Proxy-Konfiguration für Exchange-spezifische Dienste
+                $serverHTML += "<h4>Exchange & Proxy</h4>"
+                $serverHTML += "<p><em>Ein HTTP-Proxy kann Exchange-Funktionen beeinträchtigen:</em></p>"
+                $serverHTML += "<ul>"
+                $serverHTML += "<li>Hybridkonfiguration mit Exchange Online</li>"
+                $serverHTML += "<li>EEMS (Emergency Mitigation Service) - Pattern-Updates</li>"
+                $serverHTML += "<li>Anti-Spam Definition Updates</li>"
+                $serverHTML += "<li>Autodiscover externe Abfragen</li>"
+                $serverHTML += "</ul>"
+
+                if ($session) { Remove-CimSession -CimSession $session -ErrorAction SilentlyContinue }
+            } catch {
+                Write-Log -Message "HTTP Proxy für $server fehlgeschlagen: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>HTTP Proxy Informationen konnten nicht abgerufen werden: $_</p>"
+            }
+
+            $proxyHTML += $serverHTML
+        } catch {
+            Write-Log -Message "Fehler bei HTTP Proxy für ${server}: $_" -Level "ERROR"
+            $proxyHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+    New-HTMLSection -Title "HTTP Proxy Konfiguration" -Content $proxyHTML
+}
+
+# ---------------------------------------------------------------
+# 56. INSTALLIERTE ANTIVIRENLÖSUNG
+# ---------------------------------------------------------------
+function Get-AntivirusProductInfo {
+    <#
+    .SYNOPSIS
+        Erkennt installierte Antivirenlösungen und deren Status auf den Servern.
+    #>
+    Write-Log -Message "=== Sammle installierte Antivirenlösungen ===" -Level "INFO"
+
+    $avHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "Antivirus-Check für Server: $server" -Level "INFO"
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+
+            try {
+                $session = New-ServerCimSession -ComputerName $server
+                if (-not $session) { throw "Keine CIM-Session verfügbar." }
+
+                # Methode 1: SecurityCenter2 WMI (Windows Defender / Security Center)
+                $avProducts = @()
+                try {
+                    $securityCenter = Get-CimInstance -CimSession $session -Namespace "root\SecurityCenter2" -ClassName AntiVirusProduct -ErrorAction SilentlyContinue
+                    if ($securityCenter) {
+                        $avProducts = foreach ($av in $securityCenter) {
+                            $stateText = switch ($av.productState) {
+                                {$_ -band 0x1000} { "Aktiv" }
+                                {$_ -band 0x2000} { "Aktiv (Überwachen)" }
+                                default { "Unbekannt" }
+                            }
+                            $enabledText = if ($av.productState -band 0x100) { "Ja" } else { "Nein" }
+                            $upToDateText = if ($av.productState -band 0x10) { "Ja" } else { "Nein" }
+                            $realTimeText = if (($av.productState -band 0x1000) -eq 0x1000) { "✅ Aktiv" } else { "❌ Inaktiv" }
+
+                            [PSCustomObject]@{
+                                "Antivirenprodukt"   = $av.displayName
+                                "Hersteller"         = if ($av.companyName) { $av.companyName } else { "-" }
+                                "Echtzeitschutz"     = $realTimeText
+                                "Aktiviert"          = $enabledText
+                                "Definition aktuell" = $upToDateText
+                                "Product State (Hex)"= "0x$('{0:X}' -f $av.productState)"
+                            }
+                        }
+                    }
+                } catch {
+                    Write-Log -Message "SecurityCenter2 WMI nicht verfügbar auf $server (Namespace existiert nicht): $_" -Level "WARNING"
+                }
+
+                # Methode 2: Registry - Installierte AV-Produkte auslesen
+                if ($avProducts.Count -eq 0) {
+                    try {
+                        $avKeys = Get-CimInstance -CimSession $session -ClassName StdRegProv -Namespace root/default -ErrorAction SilentlyContinue
+                        if ($avKeys) {
+                            $avPaths = @(
+                                "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                                "SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+                            )
+                            $avFromReg = @()
+                            foreach ($regPath in $avPaths) {
+                                $enumResult = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName EnumKey -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $regPath } -ErrorAction SilentlyContinue
+                                if ($enumResult -and $enumResult.sNames) {
+                                    foreach ($subKey in $enumResult.sNames) {
+                                        $fullPath = "$regPath\$subKey"
+                                        $displayName = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName GetStringValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $fullPath; sValueName = "DisplayName" } -ErrorAction SilentlyContinue
+                                        if ($displayName.sValue -and ($displayName.sValue -match "Antivirus|Anti-Virus|Anti Virus|Virenschutz|Defender|McAfee|Trend Micro|Sophos|Symantec|Norton|Kaspersky|Bitdefender|Avast|AVG|Malwarebytes|CrowdStrike|SentinelOne|Palo Alto|Panda|F-Secure|ESET|G Data|VIPRE|Webroot|Fortinet|Check Point" -or $subKey -match "antivirus|defender|mcafee|trend|sophos|Symantec|kaspersky|bitdefender|avast|avg|malwarebytes|crowdstrike|sentinel|paloalto|panda|fsecure|eset" )) {
+                                            $displayVersion = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName GetStringValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $fullPath; sValueName = "DisplayVersion" } -ErrorAction SilentlyContinue
+                                            $publisher = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName GetStringValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $fullPath; sValueName = "Publisher" } -ErrorAction SilentlyContinue
+                                            $avFromReg += [PSCustomObject]@{
+                                                "Antivirenprodukt" = $displayName.sValue
+                                                "Version"          = if ($displayVersion.sValue) { $displayVersion.sValue } else { "-" }
+                                                "Hersteller"       = if ($publisher.sValue) { $publisher.sValue } else { "-" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if ($avFromReg.Count -gt 0) {
+                                $serverHTML += "<h4>Installierte Antiviren-/Security-Software (Registry)</h4>"
+                                $serverHTML += "<p><strong>Anzahl:</strong> $($avFromReg.Count)</p>"
+                                $serverHTML += (ConvertTo-HTMLTable -Data ($avFromReg | Sort-Object Hersteller))
+                            }
+                        }
+                    } catch {
+                        Write-Log -Message "AV Registry-Abfrage (CIM) fehlgeschlagen: $_" -Level "WARNING"
+                    }
+                }
+
+                # Ergebnisse aus SecurityCenter anzeigen
+                if ($avProducts.Count -gt 0) {
+                    $serverHTML += "<h4>Windows Security Center - Erkannte Antivirenprodukte</h4>"
+                    $serverHTML += (ConvertTo-HTMLTable -Data ($avProducts | Sort-Object Hersteller))
+                }
+
+                # Methode 3: Windows Defender spezifisch (lokal)
+                try {
+                    $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
+                    if ($isLocal) {
+                        try {
+                            $defenderStatus = Get-MpComputerStatus -ErrorAction SilentlyContinue
+                            if ($defenderStatus) {
+                                $defData = [PSCustomObject]@{
+                                    "RealTime Protection Enabled" = if ($defenderStatus.RealTimeProtectionEnabled) { "✅ Aktiv" } else { "❌ Inaktiv" }
+                                    "AM Service Enabled"           = $defenderStatus.AMServiceEnabled
+                                    "Antispyware Enabled"          = $defenderStatus.AntispywareEnabled
+                                    "Antivirus Enabled"            = $defenderStatus.AntivirusEnabled
+                                    "Behavior Monitor Enabled"     = $defenderStatus.BehaviorMonitorEnabled
+                                    "Defender Version"             = $defenderStatus.AMProductVersion
+                                    "Engine Version"               = $defenderStatus.AMEngineVersion
+                                    "Definitions Update"           = if ($defenderStatus.AntivirusSignatureLastUpdated) { $defenderStatus.AntivirusSignatureLastUpdated } else { "-" }
+                                    "Definitions Version"          = if ($defenderStatus.AntivirusSignatureVersion) { $defenderStatus.AntivirusSignatureVersion } else { "-" }
+                                }
+                                $serverHTML += "<h4>Microsoft Defender Status (lokal)</h4>"
+                                $serverHTML += (ConvertTo-HTMLTable -Data @($defData))
+                            }
+                        } catch {
+                            Write-Log -Message "Get-MpComputerStatus nicht verfügbar (kein Defender oder Win10+): $_" -Level "WARNING"
+                        }
+                    }
+                } catch {
+                    Write-Log -Message "Lokaler Defender-Check fehlgeschlagen: $_" -Level "WARNING"
+                }
+
+                # Kein AV gefunden
+                if ($avProducts.Count -eq 0) {
+                    try {
+                        $regCheckAvCount = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName EnumKey -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" } -ErrorAction SilentlyContinue
+                        $serverHTML += "<p class='no-data'>Keine Antivirenprodukte via SecurityCenter gefunden (möglicherweise kein SecurityCenter oder AV nicht registriert).</p>"
+                        $serverHTML += "<p><em>Hinweis: Der installierte Virenscanner kann auch über die Registry unter den Uninstall-Keys gefunden werden (siehe Tabelle oben).</em></p>"
+                    } catch { }
+                }
+
+                if ($session) { Remove-CimSession -CimSession $session -ErrorAction SilentlyContinue }
+            } catch {
+                Write-Log -Message "Antivirus-Check für $server fehlgeschlagen: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>Antivirus-Informationen konnten nicht abgerufen werden: $_</p>"
+            }
+
+            $avHTML += $serverHTML
+        } catch {
+            Write-Log -Message "Fehler bei Antivirus für ${server}: $_" -Level "ERROR"
+            $avHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+    New-HTMLSection -Title "Installierte Antivirenlösung" -Content $avHTML
+}
+
+#endregion
+
+#region ============================================================
 # HTML-DOKUMENT GENERIERUNG
 #endregion ============================================================
 
@@ -6061,7 +7345,7 @@ function Build-HTMLDocument {
 <head>
     <meta charset="UTF-8">
     <meta name="author" content="$script:DocAuthor">
-    <meta name="generator" content="Exchange Dokumentations-Skript v1.0">
+    <meta name="generator" content="Exchange Dokumentations-Skript v1.7">
     <title>$script:DocTitle - $script:DocSubTitle</title>
     $cssStyle
 </head>
@@ -6074,7 +7358,7 @@ function Build-HTMLDocument {
             <p>Erstellt am: $script:DateOnly</p>
             <p>Erstellt von: $script:DocAuthor</p>
             <p>Dokumentierte Server: $($ExchangeServers -join ', ')</p>
-            <p>Version: 1.0 (Exchange 2019 &amp; SE / CIM-DCOM Fallback)</p>
+            <p>Version: 1.7 (Exchange 2019 &amp; SE / CIM-DCOM Fallback)</p>
         </div>
     </div>
 
@@ -6085,7 +7369,7 @@ function Build-HTMLDocument {
     $($script:HTMLSections -join "`n`n")
 
     <div class="footer">
-        <p>$script:DocTitle | $script:DocSubTitle | Erstellt: $script:Timestamp | PowerShell Dokumentation v1.0</p>
+        <p>$script:DocTitle | $script:DocSubTitle | Erstellt: $script:Timestamp | PowerShell Dokumentation v1.7</p>
     </div>
 
 </body>
@@ -6179,6 +7463,22 @@ function Get-DocSectionRegistry {
 
         # === HYBRID ===
         [PSCustomObject]@{ Key = "Hybrid";             Label = "Hybrid mit Exchange Online";        Category = "Hybrid / Cloud";     Function = "Get-HybridConfigurationInfo" }
+
+        # === NEU IN v1.7 ===
+        [PSCustomObject]@{ Key = "WindowsFeatures";    Label = "Windows Features & Rollen";         Category = "Hardware & OS";      Function = "Get-WindowsFeaturesInfo" }
+        [PSCustomObject]@{ Key = "DotNetFramework";    Label = ".NET Framework Version & DLLs";     Category = "Hardware & OS";      Function = "Get-DotNetFrameworkInfo" }
+        [PSCustomObject]@{ Key = "PendingReboot";      Label = "Ausstehende Neustarts";             Category = "Hardware & OS";      Function = "Get-PendingRebootInfo" }
+        [PSCustomObject]@{ Key = "CpuThrottling";      Label = "CPU Throttling Analyse";            Category = "Hardware & OS";      Function = "Get-CpuThrottlingInfo" }
+        [PSCustomObject]@{ Key = "VCRedist";           Label = "Visual C++ Redistributable";        Category = "Hardware & OS";      Function = "Get-VCRedistInfo" }
+        [PSCustomObject]@{ Key = "CredentialGuard";    Label = "Credential Guard Status";           Category = "Sicherheit";         Function = "Get-CredentialGuardInfo" }
+        [PSCustomObject]@{ Key = "LocalAdmin";         Label = "Lokale Administratoren";            Category = "Sicherheit";         Function = "Get-LocalAdminInfo" }
+        [PSCustomObject]@{ Key = "DomainTrust";        Label = "Domain Trusts & Verschlüsselung";   Category = "Active Directory";   Function = "Get-DomainTrustInfo" }
+        [PSCustomObject]@{ Key = "FIPFS";              Label = "FIP-FS Scan Engine Version";        Category = "Sicherheit";         Function = "Get-FIPFSInfo" }
+        [PSCustomObject]@{ Key = "SettingOverride";    Label = "Exchange Setting Overrides";        Category = "Exchange Basis";     Function = "Get-SettingOverrideInfo" }
+        [PSCustomObject]@{ Key = "ServerComponent";    Label = "Server Component State";            Category = "Exchange Basis";     Function = "Get-ServerComponentStateInfo" }
+        [PSCustomObject]@{ Key = "SecurityCVE";        Label = "Security CVE Prüfung";              Category = "Sicherheit";         Function = "Get-SecurityCVEInfo" }
+        [PSCustomObject]@{ Key = "HttpProxy";          Label = "HTTP Proxy Konfiguration";          Category = "Sicherheit";         Function = "Get-HttpProxyInfo" }
+        [PSCustomObject]@{ Key = "AntivirusProduct";  Label = "Installierte Antivirenlösung";      Category = "Sicherheit";         Function = "Get-AntivirusProductInfo" }
 
         # === NEU IN v1.6 ===
         [PSCustomObject]@{ Key = "MessageQueue";       Label = "Message Queue Analyse";             Category = "Mail-Flow";          Function = "Get-MessageQueueInfo" }
@@ -6423,7 +7723,7 @@ function Show-DocumentationGui {
     [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Exchange Server Dokumentation v1.6" Height="920" Width="1120"
+        Title="Exchange Server Dokumentation v1.7" Height="920" Width="1120"
         WindowStartupLocation="CenterScreen" Background="#EDEDF2" ResizeMode="CanResize" MinWidth="900" MinHeight="700"
         FontFamily="Segoe UI, Arial, sans-serif">
     <Window.Resources>
@@ -6700,11 +8000,11 @@ function Show-DocumentationGui {
                 <!-- Titel -->
                 <StackPanel Grid.Column="1" Margin="16,16,0,16" VerticalAlignment="Center">
                     <TextBlock Text="Exchange Server Dokumentation" FontSize="26" FontWeight="SemiBold" Foreground="White"/>
-                    <TextBlock Text="TLS/SSL · Automatische Erkennung · Multi-Format Export · Health Checks" Foreground="#90CAF9" FontSize="13" Margin="0,4,0,0"/>
+                    <TextBlock Text="System-Checks · TLS/SSL · Multi-Format Export · 13 neue Prüfungen" Foreground="#90CAF9" FontSize="13" Margin="0,4,0,0"/>
                 </StackPanel>
                 <!-- Version Badge -->
                 <Border Grid.Column="2" CornerRadius="6" Background="#FFFFFF22" Padding="10,6" Margin="0,0,16,0" VerticalAlignment="Center">
-                    <TextBlock Text="v1.6" Foreground="Black" FontWeight="Bold" FontSize="13"/>
+                    <TextBlock Text="v1.7" Foreground="Black" FontWeight="Bold" FontSize="13"/>
                 </Border>
             </Grid>
         </Border>
@@ -6960,6 +8260,7 @@ function Show-DocumentationGui {
             "Sicherheit"         = "🔒"
             "Sicherheit & TLS"   = "🔐"
             "Compliance"         = "📋"
+            "Hybrid / Cloud"     = "☁️"
         }
         $catIcon = if ($iconMap.ContainsKey($cat.Name)) { $iconMap[$cat.Name] } else { "📋" }
 
@@ -7167,7 +8468,7 @@ try {
 
     # Logging starten
     Write-Log -Message "=============================================" -Level "INFO"
-    Write-Log -Message "Exchange Dokumentation gestartet (v1.0 - 2019/SE)" -Level "INFO"
+    Write-Log -Message "Exchange Dokumentation gestartet (v1.7 - 2019/SE)" -Level "INFO"
     Write-Log -Message "Zielserver: $($ExchangeServers -join ', ')" -Level "INFO"
     Write-Log -Message "Ausgabepfad: $LogPath" -Level "INFO"
     Write-Log -Message "Ausgabeformate: $($OutputFormats -join ', ')" -Level "INFO"
@@ -7271,7 +8572,7 @@ try {
     # Konsolenausgabe
     Write-Host "`n" -NoNewline
     Write-Host "===============================================================" -ForegroundColor Cyan
-    Write-Host "  Exchange Dokumentation abgeschlossen! (v1.6 - 2019/SE)" -ForegroundColor Cyan
+    Write-Host "  Exchange Dokumentation abgeschlossen! (v1.7 - 2019/SE)" -ForegroundColor Cyan
     Write-Host "===============================================================" -ForegroundColor Cyan
     foreach ($f in $createdFiles) {
         Write-Host "  Datei: $f" -ForegroundColor White

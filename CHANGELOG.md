@@ -2,6 +2,23 @@
 
 Alle signifikanten Änderungen am Projekt werden hier dokumentiert.
 
+## [1.7] - 2026-07-10
+- ✨ **13 neue System- & Sicherheitschecks hinzugefügt**
+  - Windows Features & Rollen (installierte Server Rollen per CIM/DISM)
+  - .NET Framework Version & DLLs (Release-Key, Assembly-Versionen)
+  - Ausstehende Neustarts (6 Prüfmethoden: PendingFileRename, WU, CBS, ServerMgr, CIM, SCCM)
+  - CPU Throttling Analyse (CurrentClockSpeed vs MaxClockSpeed)
+  - Visual C++ Redistributable Versionen (32/64-Bit via Registry)
+  - Credential Guard Status (LsaCfgFlags, Virtualization Based Security)
+  - Lokale Administratoren (Mitglieder via CIM/ADSI)
+  - Domain Trusts & Verschlüsselung (Trust-Typen, SupportedEncryptionTypes)
+  - FIP-FS Scan Engine Version (Anti-Malware Engine, Pattern-Update)
+  - Exchange Setting Overrides (alle aktiven Overrides dokumentieren)
+  - Exchange Server Component State (Maintenance Mode Erkennung)
+  - Security CVE Prüfung (CVE-2021-34470, CVE-2022-21978)
+  - HTTP Proxy Konfiguration (WinHTTP, Registry, netsh)
+  - Installierte Antivirenlösung (SecurityCenter WMI, Registry, Defender-Status)
+
 ## [1.6] - 2026-07-10
 - ✨ **7 neue Dokumentationsbereiche hinzugefügt**
   - Message Queue Analyse (Warteschlangen, Status, Nachrichtenanzahl)
