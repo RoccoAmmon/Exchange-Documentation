@@ -3,7 +3,7 @@
 Alle signifikanten Änderungen am Projekt werden hier dokumentiert.
 
 ## [1.7] - 2026-07-10
-- ✨ **13 neue System- & Sicherheitschecks hinzugefügt**
+- ✨ **15 neue System- & Sicherheitschecks hinzugefügt**
   - Windows Features & Rollen (installierte Server Rollen per CIM/DISM)
   - .NET Framework Version & DLLs (Release-Key, Assembly-Versionen)
   - Ausstehende Neustarts (6 Prüfmethoden: PendingFileRename, WU, CBS, ServerMgr, CIM, SCCM)
@@ -18,6 +18,7 @@ Alle signifikanten Änderungen am Projekt werden hier dokumentiert.
   - Security CVE Prüfung (CVE-2021-34470, CVE-2022-21978)
   - HTTP Proxy Konfiguration (WinHTTP, Registry, netsh)
   - Installierte Antivirenlösung (SecurityCenter WMI, Registry, Defender-Status)
+  - NIC Receive Buffer Analyse (10/25/40 Gbit/s Check, StalledDueTo-Prävention)
 
 ## [1.6] - 2026-07-10
 - ✨ **7 neue Dokumentationsbereiche hinzugefügt**

@@ -25,6 +25,7 @@
     - Security CVE Prüfung (CVE-2021-34470, CVE-2022-21978)
     - HTTP Proxy Konfiguration (WinHTTP, Registry, netsh)
     - Installierte Antivirenlösung (SecurityCenter, Registry, Defender-Status)
+    - NIC Receive Buffer Analyse (10/25/40 Gbit/s, Intel/Microsoft-Empfehlung)
 
     NEU in v1.6 (Erweiterte Dokumentationsbereiche):
     - Message Queue Analyse (Warteschlangen, Status, Nachrichtenanzahl)
@@ -174,6 +175,7 @@
                           • Security CVE Prüfung (CVE-2021-34470, CVE-2022-21978)
                           • HTTP Proxy Konfiguration (WinHTTP, Registry, netsh)
                           • Installierte Antivirenlösung (SecurityCenter WMI, Registry, Defender)
+                          • NIC Receive Buffer Analyse (10/25/40 Gbit/s, Intel/Microsoft-Empfehlung)
                      v1.6 - Erweiterte Dokumentationsbereiche:
                           • Message Queue Analyse (Warteschlangen, Status, Nachrichtenanzahl)
                           • Calendar & Resource Mailbox (Raum-/Ressourcenpostfächer, Buchungsoptionen)
@@ -7159,6 +7161,137 @@ function Get-AntivirusProductInfo {
     New-HTMLSection -Title "Installierte Antivirenlösung" -Content $avHTML
 }
 
+function Get-NICReceiveBufferInfo {
+    <#
+    .SYNOPSIS
+        Prüft die Receive Buffer Größen von Netzwerkadaptern (10/25/40 Gbit/s) und gibt Empfehlungen.
+    .DESCRIPTION
+        Analysiert die Receive Buffer Werte aller Netzwerkadapter über CIM.
+        Bei Hochgeschwindigkeits-Adaptern (10/25/40 Gbit/s) wird geprüft, ob
+        die Receive Buffer ausreichend dimensioniert sind (Intel-Empfehlung).
+        Zu kleine Werte können zu StalledDueToTarget_MdbReplication führen.
+    #>
+    Write-Log -Message "=== Sammle NIC Receive Buffer Informationen ===" -Level "INFO"
+
+    $nicHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "NIC Receive Buffer Check für Server: $server" -Level "INFO"
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+
+            try {
+                $session = New-ServerCimSession -ComputerName $server
+                if (-not $session) { throw "Keine CIM-Session verfügbar." }
+
+                # Netzwerkadapter abfragen
+                $adapters = Get-CimInstance -CimSession $session -ClassName Win32_NetworkAdapter -Filter "NetEnabled = TRUE AND Name IS NOT NULL" -ErrorAction SilentlyContinue
+                if (-not $adapters) {
+                    $adapters = Get-CimInstance -CimSession $session -ClassName Win32_NetworkAdapter -Filter "Name IS NOT NULL" -ErrorAction SilentlyContinue
+                }
+
+                if ($adapters) {
+                    $nicData = @()
+                    foreach ($adapter in $adapters) {
+                        $name = $adapter.Name
+                        $speed = $adapter.Speed
+                        $speedGbps = if ($speed -and $speed -gt 0) { [math]::Round($speed / 1e9, 1) } else { 0 }
+                        $mac = $adapter.MACAddress
+                        $manufacturer = $adapter.Manufacturer
+
+                        if ($speedGbps -ge 1 -or $speed -eq 0) {
+                            $nicKey = $null
+                            $rssQueues = $null
+                            $recvBuffers = $null
+                            $sendBuffers = $null
+
+                            # Registry-Zugriff auf NIC-Parameter
+                            try {
+                                $regPath = "SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}"
+                                $regResult = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName EnumKey -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $regPath } -ErrorAction SilentlyContinue
+                                if ($regResult -and $regResult.sNames) {
+                                    $adapterPnpId = $adapter.PNPDeviceID
+                                    if ($adapterPnpId) {
+                                        $pnpIdClean = $adapterPnpId -replace '\\', '#'
+                                        foreach ($subKey in $regResult.sNames) {
+                                            $fullKeyPath = "$regPath\$subKey"
+                                            $keyPnpId = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName GetStringValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $fullKeyPath; sValueName = "*PNPDeviceID" } -ErrorAction SilentlyContinue
+                                            if ($keyPnpId.sValue -and $keyPnpId.sValue -eq $adapterPnpId) {
+                                                $recvBuf = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName GetDWordValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $fullKeyPath; sValueName = "ReceiveBuffers" } -ErrorAction SilentlyContinue
+                                                $sendBuf = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName GetDWordValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $fullKeyPath; sValueName = "TransmitBuffers" } -ErrorAction SilentlyContinue
+                                                $rssQueues = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName GetDWordValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $fullKeyPath; sValueName = "*RssQueues" } -ErrorAction SilentlyContinue
+
+                                                if ($recvBuf) { $recvBuffers = $recvBuf.uValue }
+                                                if ($sendBuf) { $sendBuffers = $sendBuf.uValue }
+                                                break
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch {
+                                Write-Log -Message "Registry-Zugriff auf NIC-Parameter nicht möglich: $_" -Level "DEBUG"
+                            }
+
+                            # Empfehlung basierend auf Speed
+                            $recommendation = ""
+                            $statusIcon = ""
+                            if ($speedGbps -ge 40) {
+                                if ($recvBuffers -ge 4096) { $statusIcon = "✅"; $recommendation = "OK (≥4096 empfohlen für 40 Gbit/s)" }
+                                elseif ($recvBuffers -gt 0) { $statusIcon = "⚠️"; $recommendation = "Mindestens 4096 empfohlen für 40 Gbit/s (aktuell: $recvBuffers)" }
+                                else { $statusIcon = "⚠️"; $recommendation = "4096 empfohlen für 40 Gbit/s" }
+                            } elseif ($speedGbps -ge 25) {
+                                if ($recvBuffers -ge 4096) { $statusIcon = "✅"; $recommendation = "OK (≥4096 empfohlen für 25 Gbit/s)" }
+                                elseif ($recvBuffers -gt 0) { $statusIcon = "⚠️"; $recommendation = "Mindestens 4096 empfohlen für 25 Gbit/s (aktuell: $recvBuffers)" }
+                                else { $statusIcon = "⚠️"; $recommendation = "4096 empfohlen für 25 Gbit/s" }
+                            } elseif ($speedGbps -ge 10) {
+                                if ($recvBuffers -ge 2048) { $statusIcon = "✅"; $recommendation = "OK (≥2048 empfohlen für 10 Gbit/s)" }
+                                elseif ($recvBuffers -gt 0) { $statusIcon = "⚠️"; $recommendation = "Mindestens 2048 empfohlen für 10 Gbit/s (aktuell: $recvBuffers)" }
+                                else { $statusIcon = "⚠️"; $recommendation = "2048 empfohlen für 10 Gbit/s" }
+                            } elseif ($speedGbps -ge 1) {
+                                $statusIcon = "ℹ️"; $recommendation = "Keine spezifische Empfehlung (1 Gbit/s)"
+                            }
+
+                            if ($speedGbps -gt 0 -or ($recvBuffers -gt 0)) {
+                                $nicData += [PSCustomObject]@{
+                                    "Adapter-Name"          = $name
+                                    "Geschwindigkeit"       = if ($speedGbps -gt 0) { "$speedGbps Gbit/s" } else { "Unbekannt" }
+                                    "MAC-Adresse"           = if ($mac) { $mac } else { "-" }
+                                    "Hersteller"            = if ($manufacturer) { $manufacturer } else { "-" }
+                                    "Receive Buffers"       = if ($recvBuffers) { $recvBuffers } else { "Standard (512)" }
+                                    "Transmit Buffers"      = if ($sendBuffers) { $sendBuffers } else { "Standard" }
+                                    "RSS Queues"            = if ($rssQueues) { $rssQueues.uValue } else { "Standard" }
+                                    "Empfehlung"            = "$statusIcon $recommendation"
+                                }
+                            }
+                        }
+                    }
+
+                    if ($nicData.Count -gt 0) {
+                        $serverHTML += ConvertTo-HTMLTable -Data $nicData -HeaderColor "#005a9e"
+                        $serverHTML += "<p style='font-size:0.9em; color:#666;'><strong>Hinweis:</strong> Microsoft CSS-Exchange empfiehlt bei 25 Gbit/s Adaptern Receive Buffers von 4096 (Default: 512) um StalledDueToTarget_MdbReplication zu vermeiden. Siehe <a href='https://github.com/microsoft/CSS-Exchange/issues/2560'>GitHub Issue #2560</a>.</p>"
+                    } else {
+                        $serverHTML += "<p>Keine Hochgeschwindigkeits-Netzwerkadapter gefunden.</p>"
+                    }
+                } else {
+                    $serverHTML += "<p class='error'>Keine Netzwerkadapter abrufbar.</p>"
+                }
+
+                if ($session) { Remove-CimSession -CimSession $session -ErrorAction SilentlyContinue }
+
+            } catch {
+                Write-Log -Message "Fehler bei NIC-Analyse für ${server}: $_" -Level "ERROR"
+                $serverHTML += "<p class='error'>Fehler: $_</p>"
+            }
+
+            $nicHTML += $serverHTML
+
+        } catch {
+            Write-Log -Message "Fehler bei NIC-Analyse für ${server}: $_" -Level "ERROR"
+        }
+    }
+    New-HTMLSection -Title "NIC Receive Buffer Analyse" -Content $nicHTML
+}
+
 #endregion
 
 #region ============================================================
@@ -7479,6 +7612,7 @@ function Get-DocSectionRegistry {
         [PSCustomObject]@{ Key = "SecurityCVE";        Label = "Security CVE Prüfung";              Category = "Sicherheit";         Function = "Get-SecurityCVEInfo" }
         [PSCustomObject]@{ Key = "HttpProxy";          Label = "HTTP Proxy Konfiguration";          Category = "Sicherheit";         Function = "Get-HttpProxyInfo" }
         [PSCustomObject]@{ Key = "AntivirusProduct";  Label = "Installierte Antivirenlösung";      Category = "Sicherheit";         Function = "Get-AntivirusProductInfo" }
+        [PSCustomObject]@{ Key = "NICReceiveBuffer";   Label = "NIC Receive Buffer Analyse";        Category = "Hardware & OS";      Function = "Get-NICReceiveBufferInfo" }
 
         # === NEU IN v1.6 ===
         [PSCustomObject]@{ Key = "MessageQueue";       Label = "Message Queue Analyse";             Category = "Mail-Flow";          Function = "Get-MessageQueueInfo" }
