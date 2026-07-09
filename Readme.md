@@ -3,7 +3,7 @@
 > **Automatische Erfassung und Dokumentation von Microsoft Exchange On-Premises Umgebungen (Exchange 2013, 2016, 2019 & Subscription Edition)**
 
 [![Status](https://img.shields.io/badge/Status-Release-brightgreen?style=flat-square)](./CHANGELOG.md)
-[![Version](https://img.shields.io/badge/Version-1.5-blue?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-1.6-blue?style=flat-square)](./CHANGELOG.md)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-blue?style=flat-square)](https://www.microsoft.com/en-us/download/details.aspx?id=50395)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
 [![GitHub Issues](https://img.shields.io/github/issues/RoccoAmmon/Exchange-Documentation?style=flat-square)](https://github.com/RoccoAmmon/Exchange-Documentation/issues)
@@ -71,7 +71,14 @@ Das Tool unterstützt **Exchange Server 2013, 2016, 2019** sowie **Exchange Serv
 - Automatischer CIM → DCOM Fallback
 - Mail-Tips & MailTips-Konfiguration
 - Journal Rules und Message Tracking
-
+### 📦 Neue Dokumentationsbereiche (v1.6)
+- **Message Queue Analyse** – Status, Nachrichtenanzahl und Retry-Queues pro Transport-Warteschlange
+- **Calendar & Resource Mailbox** – Raum-/Ressourcenpostfächer, AutomateProcessing, BookingWindow
+- **Exchange Archive** – Archivpostfächer, ArchiveQuota, Auto-Expanding Archive
+- **Exchange Message Size Limits** – Org, Send/Receive Connector, Remote Domain und Benutzer-Limits
+- **Partner Applications** – OAuth-App-Registrierungen (SharePoint, Skype, CRM)
+- **Federated Sharing** – Federation Trust, Organization Relationships, Federated Domains
+- **OAuth / Certificate Based Auth** – Auth Server, Auth Config, OAuth-Zertifikate, CBA
 ### 📄 Export & Output
 - **HTML-Export** mit formatiertem Inhaltsverzeichnis
 - **PDF-Export** (optional)

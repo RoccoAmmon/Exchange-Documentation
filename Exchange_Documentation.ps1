@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Exchange On-Premises Dokumentations-Skript (v1.5 - Exchange 2013/2016/2019 & SE Support)
+    Exchange On-Premises Dokumentations-Skript (v1.6 - Exchange 2013/2016/2019 & SE Support)
 .DESCRIPTION
     Erstellt eine umfassende HTML-Dokumentation der gesamten Exchange On-Premises Umgebung.
     Unterstützt Exchange Server 2019 und Exchange Server Subscription Edition (SE).
@@ -9,6 +9,15 @@
     WICHTIG: Diese Version verwendet CIM-Sessions mit automatischem DCOM-Fallback,
     sodass das Skript auch funktioniert, wenn WinRM (PowerShell Remoting) nicht
     korrekt konfiguriert ist.
+
+    NEU in v1.6 (Erweiterte Dokumentationsbereiche):
+    - Message Queue Analyse (Warteschlangen, Status, Nachrichtenanzahl)
+    - Calendar & Resource Mailbox Konfiguration (Raum-/Ressourcenpostfächer, Buchungsoptionen)
+    - Exchange Archive Konfiguration (Archivpostfächer, Quotas, Auto-Expanding Archive)
+    - Exchange Message Size Limits (Org, Connector, Remote Domain, Benutzer)
+    - Exchange Partner Applications (SharePoint, Skype, CRM)
+    - Exchange Federated Sharing (Federation Trust, Organization Relationships)
+    - OAuth / Certificate Based Auth (Auth Server, Zertifikate, CBA)
 
     NEU in v1.5 (Modernes GUI-Redesign & Bugfixes):
     - Komplett überarbeitete WPF-Oberfläche mit modernem Design
@@ -105,6 +114,13 @@
     - Compliance (DLP, Litigation Hold, In-Place Hold)
     - Mailbox-Quotas und Warnungs-Schwellwerte
     - SMTP-Relay Konfiguration (Geräte/Applikationen)
+    - Message Queue Analyse (Warteschlangen, Status, Nachrichtenanzahl)
+    - Calendar & Resource Mailbox (Raum-/Ressourcenpostfächer, Buchungsoptionen)
+    - Exchange Archive (Archivpostfächer, Quotas, Auto-Expanding Archive)
+    - Exchange Message Size Limits (Org, Connector, Remote Domain, Benutzer)
+    - Exchange Partner Applications (SharePoint, Skype, CRM)
+    - Exchange Federated Sharing (Federation Trust, Organization Relationships)
+    - OAuth / Certificate Based Auth (Auth Server, Zertifikate, CBA)
 
 .PARAMETER ExchangeServers
     Array von Exchange-Servernamen, die dokumentiert werden sollen.
@@ -127,7 +143,15 @@
     Version:         1.4
     Erstellt:        2026-03-05
     Letzte Änderung: 2026-06-30
-    Änderungen:      v1.5 - Modernes GUI-Redesign & Bugfixes:
+    Änderungen:      v1.6 - Erweiterte Dokumentationsbereiche:
+                          • Message Queue Analyse (Warteschlangen, Status, Nachrichtenanzahl)
+                          • Calendar & Resource Mailbox (Raum-/Ressourcenpostfächer, Buchungsoptionen)
+                          • Exchange Archive (Archivpostfächer, Quotas, Auto-Expanding Archive)
+                          • Exchange Message Size Limits (Org, Connector, Remote Domain, Benutzer)
+                          • Exchange Partner Applications (SharePoint, Skype, CRM)
+                          • Exchange Federated Sharing (Federation Trust, Organization Relationships)
+                          • OAuth / Certificate Based Auth (Auth Server, Zertifikate, CBA)
+                     v1.5 - Modernes GUI-Redesign & Bugfixes:
                           • Komplett überarbeitete WPF-Oberfläche mit modernem Design
                           • Neue Header-Grafik mit Farbverlauf und Version-Badge
                           • Moderne Karten (Cards) für alle Bereiche mit Schatteneffekten
@@ -5139,6 +5163,718 @@ function Get-HybridConfigurationInfo {
     New-HTMLSection -Title "Hybrid-Konfiguration (Exchange Online)" -Content $hybridHTML
 }
 
+# ---------------------------------------------------------------
+# 36. MESSAGE QUEUE ANALYSE
+# ---------------------------------------------------------------
+function Get-MessageQueueInfo {
+    <#
+    .SYNOPSIS
+        Analysiert die aktuellen Transport-Warteschlangen (Queues) auf allen Exchange-Servern.
+        Zeigt Anzahl, Status, Größe und älteste Nachrichten.
+    #>
+    Write-Log -Message "=== Sammle Message Queue Informationen ===" -Level "INFO"
+
+    $queueHTML = ""
+
+    foreach ($server in $ExchangeServers) {
+        try {
+            Write-Log -Message "Message Queues für Server: $server" -Level "INFO"
+
+            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+
+            try {
+                $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
+
+                if ($isLocal) {
+                    $queues = Get-Queue -ErrorAction SilentlyContinue
+                } else {
+                    $queues = Get-Queue -Server $server -ErrorAction SilentlyContinue
+                }
+
+                if ($queues) {
+                    $queueData = foreach ($q in $queues) {
+                        $statusIcon = switch ($q.Status) {
+                            "Ready"     { "✅" }
+                            "Retry"     { "🟡" }
+                            "Suspended" { "🔴" }
+                            "Active"    { "🔄" }
+                            default     { "ℹ️" }
+                        }
+                        [PSCustomObject]@{
+                            "Server"        = $q.Identity.ToString().Split('\')[0]
+                            "Queue Name"    = $q.Identity.ToString().Split('\')[1]
+                            "Status"        = "$statusIcon $($q.Status)"
+                            "Nachrichten"   = $q.MessageCount
+                            "Nächster Versuch" = if ($q.NextHopConnector) { $q.NextHopConnector.ToString().Substring(0, 8) + "..." } else { "-" }
+                            "Delivery Type"  = $q.DeliveryType
+                            "Risk Level"    = $q.RiskLevel
+                        }
+                    }
+                    $serverHTML += "<h4>Transport-Warteschlangen</h4>"
+                    $serverHTML += (ConvertTo-HTMLTable -Data $queueData)
+
+                    # Zusammenfassung
+                    $totalMessages = ($queues | Measure-Object -Property MessageCount -Sum).Sum
+                    $retryQueues = ($queues | Where-Object { $_.Status -eq "Retry" }).Count
+                    $suspendedQueues = ($queues | Where-Object { $_.Status -eq "Suspended" }).Count
+                    $serverHTML += "<p><strong>Gesamt Nachrichten in Warteschlangen:</strong> $totalMessages | "
+                    $serverHTML += "<strong>Retry-Queues:</strong> $retryQueues | "
+                    $serverHTML += "<strong>Suspended-Queues:</strong> $suspendedQueues</p>"
+
+                    if ($retryQueues -gt 0 -or $suspendedQueues -gt 0) {
+                        $serverHTML += "<p class='error'>⚠️ Es gibt Warteschlangen mit Problemen (Retry/Suspended)! Bitte prüfen.</p>"
+                    }
+                }
+                else {
+                    $serverHTML += "<p class='no-data'>Keine Transport-Warteschlangen gefunden oder Transportdienst nicht verfügbar.</p>"
+                }
+            }
+            catch {
+                Write-Log -Message "Queue-Abfrage für $server fehlgeschlagen: $_" -Level "WARNING"
+                $serverHTML += "<p class='error'>Queue-Informationen konnten nicht abgerufen werden: $_</p>"
+            }
+
+            $queueHTML += $serverHTML
+        }
+        catch {
+            Write-Log -Message "Fehler bei Message Queue für ${server}: $_" -Level "ERROR"
+            $queueHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+        }
+    }
+
+    New-HTMLSection -Title "Message Queue Analyse" -Content $queueHTML
+}
+
+# ---------------------------------------------------------------
+# 37. CALENDAR & RESOURCE MAILBOX KONFIGURATION
+# ---------------------------------------------------------------
+function Get-CalendarResourceConfigInfo {
+    <#
+    .SYNOPSIS
+        Dokumentiert Raum- und Ressourcenpostfächer sowie deren Buchungsoptionen.
+    #>
+    Write-Log -Message "=== Sammle Calendar & Resource Mailbox Konfiguration ===" -Level "INFO"
+
+    $calHTML = ""
+
+    try {
+        # Raumpostfächer
+        $roomMailboxes = Get-Mailbox -RecipientTypeDetails RoomMailbox -ResultSize Unlimited -ErrorAction SilentlyContinue
+        if ($roomMailboxes) {
+            $roomData = foreach ($rm in $roomMailboxes) {
+                $calProc = Get-CalendarProcessing -Identity $rm.Identity -ErrorAction SilentlyContinue
+                [PSCustomObject]@{
+                    "Anzeigename"           = $rm.DisplayName
+                    "Alias"                 = $rm.Alias
+                    "Datenbank"             = $rm.Database
+                    "Raumkapazität"         = $rm.ResourceCapacity
+                    "Automatische Buchung"  = if ($calProc -and $calProc.AutomateProcessing -eq "AutoAccept") { "✅ Ja" } else { "❌ Nein" }
+                    "Buchungsgenehmigung"   = if ($calProc) { $calProc.BookingWindowInDays } else { "-" }
+                    "Max. Dauer (Tage)"     = if ($calProc) { $calProc.MaximumDurationInMinutes / 1440 } else { "-" }
+                    "Nur ab/bis"            = if ($calProc) { "$($calProc.AllowConflicts)" } else { "-" }
+                    "Zulässige Buchungen"   = if ($calProc) { $calProc.BookInPolicy } else { "-" }
+                }
+            }
+            $calHTML += "<h3>Raumpostfächer (Room Mailboxes)</h3>"
+            $calHTML += "<p><strong>Anzahl:</strong> $($roomMailboxes.Count)</p>"
+            $calHTML += (ConvertTo-HTMLTable -Data $roomData)
+        }
+        else {
+            $calHTML += "<h3>Raumpostfächer</h3>"
+            $calHTML += "<p class='no-data'>Keine Raumpostfächer vorhanden.</p>"
+        }
+
+        # Ressourcenpostfächer (Equipment)
+        $equipMailboxes = Get-Mailbox -RecipientTypeDetails EquipmentMailbox -ResultSize Unlimited -ErrorAction SilentlyContinue
+        if ($equipMailboxes) {
+            $equipData = foreach ($em in $equipMailboxes) {
+                $calProc = Get-CalendarProcessing -Identity $em.Identity -ErrorAction SilentlyContinue
+                [PSCustomObject]@{
+                    "DisplayName"           = $em.DisplayName
+                    "Alias"                 = $em.Alias
+                    "Datenbank"             = $em.Database
+                    "Automatische Buchung"  = if ($calProc -and $calProc.AutomateProcessing -eq "AutoAccept") { "✅ Ja" } else { "❌ Nein" }
+                    "Buchungsgenehmigung"   = if ($calProc) { $calProc.BookingWindowInDays } else { "-" }
+                    "Max. Dauer (Tage)"     = if ($calProc) { [math]::Round($calProc.MaximumDurationInMinutes / 1440, 1) } else { "-" }
+                }
+            }
+            $calHTML += "<h3>Ressourcenpostfächer (Equipment Mailboxes)</h3>"
+            $calHTML += "<p><strong>Anzahl:</strong> $($equipMailboxes.Count)</p>"
+            $calHTML += (ConvertTo-HTMLTable -Data $equipData)
+        }
+        else {
+            $calHTML += "<h3>Ressourcenpostfächer</h3>"
+            $calHTML += "<p class='no-data'>Keine Ressourcenpostfächer vorhanden.</p>"
+        }
+
+        # Calendar Processing Defaults
+        try {
+            $calHTML += "<h3>Calendar Processing Standard-Konfiguration</h3>"
+            $calHTML += "<p><em>Die CalendarProcessing-Einstellungen steuern, wie Raum-/Ressourcenpostfächer Buchungen verarbeiten:</em></p>"
+            $calHTML += "<table><thead><tr><th>Einstellung</th><th>Beschreibung</th></tr></thead><tbody>"
+            $calHTML += "<tr class='even'><td>AutomateProcessing</td><td>AutoAccept = Automatische Buchung, AutoUpdate = Nur Update, None = Manuell</td></tr>"
+            $calHTML += "<tr class='odd'><td>BookingWindowInDays</td><td>Zeitraum in Tagen für den Buchungen möglich sind (Standard: 180)</td></tr>"
+            $calHTML += "<tr class='even'><td>MaximumDurationInMinutes</td><td>Maximale Dauer einer Buchung (Standard: 1440 = 24h)</td></tr>"
+            $calHTML += "<tr class='odd'><td>AllowConflicts</td><td>Dürfen sich Buchungen überschneiden? (Standard: False)</td></tr>"
+            $calHTML += "<tr class='even'><td>BookInPolicy</td><td>Nur autorisierte Benutzer dürfen buchen (Standard: True)</td></tr>"
+            $calHTML += "<tr class='odd'><td>AllBookInPolicy</td><td>Alle Benutzer dürfen buchen (Standard: False)</td></tr>"
+            $calHTML += "<tr class='even'><td>EnforceSchedulingBehavior</td><td>Buchungsrichtlinien erzwingen (Standard: True)</td></tr>"
+            $calHTML += "</tbody></table>"
+        }
+        catch {
+            Write-Log -Message "CalendarProcessing Defaults fehlgeschlagen: $_" -Level "WARNING"
+        }
+    }
+    catch {
+        Write-Log -Message "Fehler bei Calendar/Resource Mailbox Abfrage: $_" -Level "ERROR"
+        $calHTML += "<p class='error'>Fehler: $_</p>"
+    }
+
+    New-HTMLSection -Title "Calendar & Resource Mailbox Konfiguration" -Content $calHTML
+}
+
+# ---------------------------------------------------------------
+# 38. EXCHANGE ARCHIVE KONFIGURATION
+# ---------------------------------------------------------------
+function Get-ArchiveConfigurationInfo {
+    <#
+    .SYNOPSIS
+        Dokumentiert die Archivpostfach-Konfiguration: aktivierte Archive,
+        Archiv-Quotas, Auto-Expanding Archive und Archiv-Status.
+    #>
+    Write-Log -Message "=== Sammle Exchange Archive Konfiguration ===" -Level "INFO"
+
+    $archiveHTML = ""
+
+    try {
+        # Alle Postfächer mit Archiv
+        $archivedMailboxes = Get-Mailbox -ResultSize Unlimited -ErrorAction SilentlyContinue |
+            Where-Object { $_.ArchiveDatabase -ne $null -or $_.ArchiveStatus -eq "Active" }
+
+        if ($archivedMailboxes) {
+            $archiveData = foreach ($am in $archivedMailboxes) {
+                $archiveStats = Get-MailboxStatistics -Identity $am.Identity -Archive -ErrorAction SilentlyContinue
+                $archiveSize = if ($archiveStats) { [math]::Round($archiveStats.TotalItemSize.Value.ToBytes() / 1GB, 2) } else { "N/A" }
+                $archiveItems = if ($archiveStats) { $archiveStats.ItemCount } else { "N/A" }
+
+                [PSCustomObject]@{
+                    "DisplayName"           = $am.DisplayName
+                    "Archiv-Datenbank"      = $am.ArchiveDatabase
+                    "Archiv-Status"         = $am.ArchiveStatus
+                    "Archiv-Quota (GB)"      = if ($am.ArchiveQuota) { [math]::Round($am.ArchiveQuota.Value.ToBytes() / 1GB, 2) } else { "Nicht gesetzt" }
+                    "Archiv-Warnung (GB)"   = if ($am.ArchiveWarningQuota) { [math]::Round($am.ArchiveWarningQuota.Value.ToBytes() / 1GB, 2) } else { "Nicht gesetzt" }
+                    "Auto-Expanding"          = if ($am.AutoExpandingArchiveEnabled) { "✅ Ja" } else { "❌ Nein" }
+                    "Archiv-Größe (GB)"        = $archiveSize
+                    "Archiv-Items"          = $archiveItems
+                }
+            }
+
+            $archiveHTML += "<h3>Postfächer mit aktiviertem Archiv</h3>"
+            $archiveHTML += "<p><strong>Anzahl:</strong> $($archivedMailboxes.Count) von $((Get-Mailbox -ResultSize Unlimited -ErrorAction SilentlyContinue).Count) Postfächern</p>"
+            $archiveHTML += (ConvertTo-HTMLTable -Data $archiveData)
+        }
+        else {
+            $archiveHTML += "<h3>Archivpostfächer</h3>"
+            $archiveHTML += "<p class='no-data'>Keine Postfächer mit aktiviertem Archiv gefunden.</p>"
+        }
+
+        # Archiv-Datenbanken
+        try {
+            $archiveDatabases = Get-MailboxDatabase -ErrorAction SilentlyContinue |
+                Where-Object { $_.IsExcludedFromProvisioning -eq $false -and $_.Name -like "*Archive*" }
+
+            if (-not $archiveDatabases) {
+                # Fallback: Alle DBs, die als Archiv markiert sind
+                $archiveDatabases = Get-MailboxDatabase -ErrorAction SilentlyContinue |
+                    Where-Object { $_.IsArchive }
+            }
+
+            if ($archiveDatabases) {
+                $adbData = foreach ($adb in $archiveDatabases) {
+                    [PSCustomObject]@{
+                        "Name"              = $adb.Name
+                        "Server"            = $adb.Server
+                        "EdbFilePath"       = $adb.EdbFilePath
+                        "LogFolderPath"     = $adb.LogFolderPath
+                        "Verfügbarer Platz" = if ($adb.AvailableNewMailboxSpace) { [math]::Round($adb.AvailableNewMailboxSpace.Value.ToBytes() / 1GB, 2) } else { "N/A" }
+                    }
+                }
+                $archiveHTML += "<h3>Archiv-Datenbanken</h3>"
+                $archiveHTML += (ConvertTo-HTMLTable -Data $adbData)
+            }
+        }
+        catch {
+            Write-Log -Message "Archiv-Datenbank Abfrage fehlgeschlagen: $_" -Level "WARNING"
+        }
+
+        # Auto-Expanding Archive Übersicht
+        try {
+            $autoExpandMailboxes = $archivedMailboxes | Where-Object { $_.AutoExpandingArchiveEnabled -eq $true }
+            if ($autoExpandMailboxes) {
+                $archiveHTML += "<h3>Auto-Expanding Archive</h3>"
+                $archiveHTML += "<p><strong>Auto-Expanding Archive aktiviert für:</strong> $($autoExpandMailboxes.Count) Postfächer</p>"
+                $archiveHTML += "<p><em>Auto-Expanding Archive erlauben Postfächern > 100 GB Archiv-Größe durch automatische "`
+                    + "Hinzufügung zusätzlicher Archiv-Datenbanken.</em></p>"
+            }
+        }
+        catch {
+            Write-Log -Message "Auto-Expanding Check fehlgeschlagen: $_" -Level "WARNING"
+        }
+    }
+    catch {
+        Write-Log -Message "Fehler bei Archive-Konfiguration: $_" -Level "ERROR"
+        $archiveHTML += "<p class='error'>Fehler: $_</p>"
+    }
+
+    New-HTMLSection -Title "Exchange Archive Konfiguration" -Content $archiveHTML
+}
+
+# ---------------------------------------------------------------
+# 39. EXCHANGE MESSAGE SIZE LIMITS
+# ---------------------------------------------------------------
+function Get-MessageSizeLimitsInfo {
+    <#
+    .SYNOPSIS
+        Dokumentiert alle Nachrichtengrößen-Limits auf Organisations-, Connector-,
+        Remote-Domain- und Benutzerebene.
+    #>
+    Write-Log -Message "=== Sammle Exchange Message Size Limits ===" -Level "INFO"
+
+    $limitsHTML = ""
+
+    try {
+        # Organisations-Level (TransportConfig)
+        try {
+            $tc = Get-TransportConfig -ErrorAction SilentlyContinue
+            if ($tc) {
+                $orgLimits = [PSCustomObject]@{
+                    "Max Send Size (Org)"        = $tc.MaxSendSize
+                    "Max Receive Size (Org)"    = $tc.MaxReceiveSize
+                    "Max Recipient Limit (Org)" = $tc.MaxRecipientEnvelopeLimit
+                }
+                $limitsHTML += "<h3>Organisations-Level Limits (TransportConfig)</h3>"
+                $limitsHTML += (ConvertTo-HTMLTable -Data @($orgLimits))
+            }
+        }
+        catch {
+            Write-Log -Message "TransportConfig Limits fehlgeschlagen: $_" -Level "WARNING"
+        }
+
+        # Connector-Level (Send Connectors)
+        try {
+            $sendConnectors = Get-SendConnector -ErrorAction SilentlyContinue
+            if ($sendConnectors) {
+                $scLimits = foreach ($sc in $sendConnectors) {
+                    [PSCustomObject]@{
+                        "Connector Name"    = $sc.Name
+                        "Typ"               = "Send Connector"
+                        "Max Message Size"  = $sc.MaxMessageSize
+                    }
+                }
+                $limitsHTML += "<h3>Send Connector Limits</h3>"
+                $limitsHTML += (ConvertTo-HTMLTable -Data $scLimits)
+            }
+        }
+        catch {
+            Write-Log -Message "SendConnector Limits fehlgeschlagen: $_" -Level "WARNING"
+        }
+
+        # Connector-Level (Receive Connectors)
+        try {
+            $recvConnectors = Get-ReceiveConnector -ErrorAction SilentlyContinue
+            if ($recvConnectors) {
+                $rcLimits = foreach ($rc in $recvConnectors) {
+                    [PSCustomObject]@{
+                        "Connector Name"    = $rc.Name
+                        "Server"            = $rc.Server
+                        "Typ"               = "Receive Connector"
+                        "Max Message Size"  = $rc.MaxMessageSize
+                        "Max Recipients"    = $rc.MaxRecipientsPerMessage
+                    }
+                }
+                $limitsHTML += "<h3>Receive Connector Limits</h3>"
+                $limitsHTML += (ConvertTo-HTMLTable -Data $rcLimits)
+            }
+        }
+        catch {
+            Write-Log -Message "ReceiveConnector Limits fehlgeschlagen: $_" -Level "WARNING"
+        }
+
+        # Remote Domain Limits
+        try {
+            $remoteDomains = Get-RemoteDomain -ErrorAction SilentlyContinue
+            if ($remoteDomains) {
+                $rdLimits = foreach ($rd in $remoteDomains) {
+                    [PSCustomObject]@{
+                        "Domain Name"           = $rd.Name
+                        "Max Message Size"     = if ($rd.MaxMessageSize) { $rd.MaxMessageSize } else { "Organisations-Standard" }
+                        "Auto Reply Enabled"    = $rd.AutoReplyEnabled
+                        "Auto Forward Enabled"  = $rd.AutoForwardEnabled
+                    }
+                }
+                $limitsHTML += "<h3>Remote Domain Limits</h3>"
+                $limitsHTML += (ConvertTo-HTMLTable -Data $rdLimits)
+            }
+        }
+        catch {
+            Write-Log -Message "RemoteDomain Limits fehlgeschlagen: $_" -Level "WARNING"
+        }
+
+        # Mailbox-Level Limits (Top 50 größten Limits)
+        try {
+            $mbxLimits = Get-Mailbox -ResultSize Unlimited -ErrorAction SilentlyContinue |
+                Where-Object { $_.MaxSendSize -ne $null -or $_.MaxReceiveSize -ne $null } |
+                Select-Object -First 50 -Property DisplayName,
+                    @{N='Max Send Size';E={$_.MaxSendSize}},
+                    @{N='Max Receive Size';E={$_.MaxReceiveSize}},
+                    @{N='ProhibitSendQuota';E={$_.ProhibitSendQuota}},
+                    @{N='MaxRecipientsPerMessage';E={$_.MaxRecipientsPerMessage}}
+
+            if ($mbxLimits) {
+                $limitsHTML += "<h3>Postfach-Individuelle Limits (Top 50)</h3>"
+                $limitsHTML += "<p><em>Nur Postfächer mit abweichenden Limits (nicht Organisations-Standard)</em></p>"
+                $limitsHTML += (ConvertTo-HTMLTable -Data $mbxLimits)
+            }
+        }
+        catch {
+            Write-Log -Message "Mailbox Limits fehlgeschlagen: $_" -Level "WARNING"
+        }
+
+        # Zusammenfassung
+        $limitsHTML += "<h3>Best Practice Empfehlungen</h3>"
+        $limitsHTML += "<table><thead><tr><th>Limit-Typ</th><th>Empfohlener Wert</th><th>Begründung</th></tr></thead><tbody>"
+        $limitsHTML += "<tr class='even'><td>Max Send Size (Org)</td><td>25-35 MB</td><td>Kompatibilität mit externen Systemen</td></tr>"
+        $limitsHTML += "<tr class='odd'><td>Max Receive Size (Org)</td><td>35-50 MB</td><td>Größere E-Mails werden oft benötigt</td></tr>"
+        $limitsHTML += "<tr class='even'><td>Max Recipient Limit</td><td>500-1000</td><td>Spam- und Massenmail-Schutz</td></tr>"
+        $limitsHTML += "<tr class='odd'><td>Send Connector Limit</td><td>10-35 MB</td><td>Abhängig vom Zielsystem</td></tr>"
+        $limitsHTML += "</tbody></table>"
+    }
+    catch {
+        Write-Log -Message "Fehler bei Message Size Limits: $_" -Level "ERROR"
+        $limitsHTML += "<p class='error'>Fehler: $_</p>"
+    }
+
+    New-HTMLSection -Title "Exchange Message Size Limits" -Content $limitsHTML
+}
+
+# ---------------------------------------------------------------
+# 40. EXCHANGE PARTNER APPLICATIONS
+# ---------------------------------------------------------------
+function Get-PartnerApplicationsInfo {
+    <#
+    .SYNOPSIS
+        Dokumentiert Partner Applications (z.B. SharePoint, Skype/Lync, CRM).
+    #>
+    Write-Log -Message "=== Sammle Exchange Partner Applications ===" -Level "INFO"
+
+    $paHTML = ""
+
+    try {
+        $partnerApps = Get-PartnerApplication -ErrorAction SilentlyContinue
+
+        if ($partnerApps) {
+            $paData = foreach ($pa in $partnerApps) {
+                [PSCustomObject]@{
+                    "Name"              = $pa.Name
+                    "Application ID"    = $pa.ApplicationIdentifier
+                    "Aktiviert"         = $pa.Enabled
+                    "Realm"             = if ($pa.Realm) { $pa.Realm } else { "-" }
+                    "Auth Metadata URL" = if ($pa.AuthMetadataUrl) { $pa.AuthMetadataUrl } else { "-" }
+                    "Akteptierte"       = if ($pa.AcceptSecurityIdentifierInformation) { "Ja" } else { "Nein" }
+                    "Linked Account"    = if ($pa.LinkedAccount) { $pa.LinkedAccount } else { "-" }
+                }
+            }
+            $paHTML += "<h3>Partner Applications</h3>"
+            $paHTML += "<p><em>Partner Applications ermöglichen OAuth-Authentifizierung zwischen Exchange und anderen Diensten.</em></p>"
+            $paHTML += (ConvertTo-HTMLTable -Data $paData)
+        }
+        else {
+            $paHTML += "<h3>Partner Applications</h3>"
+            $paHTML += "<p class='no-data'>Keine Partner Applications konfiguriert.</p>"
+        }
+    }
+    catch {
+        Write-Log -Message "Fehler bei Partner Applications: $_" -Level "ERROR"
+        $paHTML += "<p class='error'>Fehler: $_</p>"
+    }
+
+    New-HTMLSection -Title "Exchange Partner Applications" -Content $paHTML
+}
+
+# ---------------------------------------------------------------
+# 41. EXCHANGE FEDERATED SHARING
+# ---------------------------------------------------------------
+function Get-FederatedSharingInfo {
+    <#
+    .SYNOPSIS
+        Dokumentiert Federation Trust, Organization Relationships und
+        Federated Sharing-Konfiguration.
+    #>
+    Write-Log -Message "=== Sammle Exchange Federated Sharing ===" -Level "INFO"
+
+    $fedHTML = ""
+
+    # --- Federation Trust ---
+    try {
+        $fedTrust = Get-FederationTrust -ErrorAction SilentlyContinue
+        if ($fedTrust) {
+            $ftData = foreach ($ft in $fedTrust) {
+                [PSCustomObject]@{
+                    "Name"                  = $ft.Name
+                    "Org Prerequisit"       = $ft.OrgPrerequisites
+                    "Account Namespace"     = $ft.AccountNamespace
+                    "Token Issuer URI"      = $ft.TokenIssuerUri
+                    "Status"                 = $ft.Status
+                    "Application URI"       = $ft.ApplicationUri
+                    "Identifier"            = $ft.Identity
+                }
+            }
+            $fedHTML += "<h3>Federation Trust</h3>"
+            $fedHTML += (ConvertTo-HTMLTable -Data $ftData)
+        }
+        else {
+            $fedHTML += "<h3>Federation Trust</h3>"
+            $fedHTML += "<p class='no-data'>Kein Federation Trust konfiguriert.</p>"
+        }
+    }
+    catch {
+        Write-Log -Message "FederationTrust-Abfrage fehlgeschlagen: $_" -Level "WARNING"
+    }
+
+    # --- Organization Relationships ---
+    try {
+        $orgRelationships = Get-OrganizationRelationship -ErrorAction SilentlyContinue
+        if ($orgRelationships) {
+            $orData = foreach ($or in $orgRelationships) {
+                [PSCustomObject]@{
+                    "Name"                  = $or.Name
+                    "Domain Names"          = ($or.DomainNames -join ', ')
+                    "Enabled"               = $or.Enabled
+                    "FreeBusy Access"       = $or.FreeBusyAccessEnabled
+                    "FreeBusy Level"        = $or.FreeBusyAccessLevel
+                    "MailTips Access"       = $or.MailTipsAccessEnabled
+                    "Calendar Sharing"      = $or.MailboxMoveEnabled
+                    "Target Autodiscover"   = $or.TargetAutodiscoverEpr
+                }
+            }
+            $fedHTML += "<h3>Organization Relationships (Frei/Gebucht-Freigabe)</h3>"
+            $fedHTML += (ConvertTo-HTMLTable -Data $orData)
+        }
+        else {
+            $fedHTML += "<h3>Organization Relationships</h3>"
+            $fedHTML += "<p class='no-data'>Keine Organization Relationships konfiguriert.</p>"
+        }
+    }
+    catch {
+        Write-Log -Message "OrganizationRelationship-Abfrage fehlgeschlagen: $_" -Level "WARNING"
+    }
+
+    # --- Federated Domain Proof ---
+    try {
+        if ($fedTrust) {
+            $fedDomainProof = Get-FederatedOrganizationIdentifier -ErrorAction SilentlyContinue
+            if ($fedDomainProof) {
+                $fdpData = [PSCustomObject]@{
+                    "Federated Domains"         = ($fedDomainProof.Domains -join ', ')
+                    "Enabled"                   = $fedDomainProof.Enabled
+                    "Account Namespace"         = $fedDomainProof.AccountNamespace
+                    "Delegation Trust"          = $fedDomainProof.DelegationTrustLink
+                }
+                $fedHTML += "<h3>Federated Organization Identifier</h3>"
+                $fedHTML += (ConvertTo-HTMLTable -Data @($fdpData))
+            }
+        }
+    }
+    catch {
+        Write-Log -Message "FederatedOrganizationIdentifier-Abfrage fehlgeschlagen: $_" -Level "WARNING"
+    }
+
+    # --- Hinweis ---
+    $fedHTML += "<h3>Hinweis zu Federation</h3>"
+    $fedHTML += "<p><em>Federation wird für folgende Szenarien benötigt:</em></p>"
+    $fedHTML += "<ul>"
+    $fedHTML += "<li>Frei/Gebucht-Informationen mit externen Organisationen teilen</li>"
+    $fedHTML += "<li>Hybrid-Konfiguration mit Exchange Online (OAuth)</li>"
+    $fedHTML += "<li>Postfach-Migrationen zwischen Organisationen</li>"
+    $fedHTML += "<li>Kalender-Freigabe mit anderen Exchange-Organisationen</li>"
+    $fedHTML += "</ul>"
+
+    New-HTMLSection -Title "Exchange Federated Sharing" -Content $fedHTML
+}
+
+# ---------------------------------------------------------------
+# 42. OAUTH / CERTIFICATE BASED AUTH
+# ---------------------------------------------------------------
+function Get-OAuthCertificateAuthInfo {
+    <#
+    .SYNOPSIS
+        Dokumentiert die OAuth-Konfiguration, Auth Server, Zertifikate
+        und Certificate-Based Authentication (CBA) für Exchange.
+    #>
+    Write-Log -Message "=== Sammle OAuth / Certificate Based Auth ===" -Level "INFO"
+
+    $oauthHTML = ""
+
+    # --- Auth Server ---
+    try {
+        $authServers = Get-AuthServer -ErrorAction SilentlyContinue
+        if ($authServers) {
+            $asData = foreach ($as in $authServers) {
+                [PSCustomObject]@{
+                    "Name"              = $as.Name
+                    "Typ"               = $as.Type
+                    "Enabled"           = $as.Enabled
+                    "Auth Metadata URL" = if ($as.AuthMetadataUrl) { $as.AuthMetadataUrl } else { "-" }
+                    "Realm"             = if ($as.Realm) { $as.Realm } else { "-" }
+                    "Issuer Identifier" = if ($as.IssuerIdentifier) { $as.IssuerIdentifier } else { "-" }
+                }
+            }
+            $oauthHTML += "<h3>Auth Server (OAuth-Konfiguration)</h3>"
+            $oauthHTML += (ConvertTo-HTMLTable -Data $asData)
+        }
+        else {
+            $oauthHTML += "<h3>Auth Server</h3>"
+            $oauthHTML += "<p class='no-data'>Keine Auth Server konfiguriert.</p>"
+        }
+    }
+    catch {
+        Write-Log -Message "AuthServer-Abfrage fehlgeschlagen: $_" -Level "WARNING"
+    }
+
+    # --- Auth Config (OAuth-Zertifikate) ---
+    try {
+        $authConfig = Get-AuthConfig -ErrorAction SilentlyContinue
+        if ($authConfig) {
+            $acData = [PSCustomObject]@{
+                "Name"                      = $authConfig.Name
+                "Service Name"              = $authConfig.ServiceName
+                "Realm"                     = $authConfig.Realm
+                "Current Certificate"       = if ($authConfig.CurrentCertificateThumbprint) { $authConfig.CurrentCertificateThumbprint } else { "-" }
+                "Previous Certificate"         = if ($authConfig.PreviousCertificateThumbprint) { $authConfig.PreviousCertificateThumbprint } else { "-" }
+                "Next Certificate"           = if ($authConfig.NextCertificateThumbprint) { $authConfig.NextCertificateThumbprint } else { "-" }
+                "Certificate Rollover"    = $authConfig.CertificateRolloverEnabled
+            }
+            $oauthHTML += "<h3>Auth Config (OAuth-Zertifikate)</h3>"
+            $oauthHTML += (ConvertTo-HTMLTable -Data @($acData))
+
+            # Zertifikat-Details
+            $currentThumb = $authConfig.CurrentCertificateThumbprint
+            if ($currentThumb) {
+                try {
+                    $cert = Get-ChildItem -Path "Cert:\LocalMachine\My\$currentThumb" -ErrorAction SilentlyContinue
+                    if ($cert) {
+                        $certInfo = [PSCustomObject]@{
+                            "Subject"       = $cert.Subject
+                            "Issuer"        = $cert.Issuer
+                            "Not Before"    = $cert.NotBefore.ToString("dd.MM.yyyy")
+                            "Not After"     = $cert.NotAfter.ToString("dd.MM.yyyy")
+                            "Thumbprint"    = $cert.Thumbprint
+                            "Serial Number" = $cert.SerialNumber
+                        }
+                        $oauthHTML += "<h4>Aktuelles OAuth-Zertifikat (Details)</h4>"
+                        $oauthHTML += (ConvertTo-HTMLTable -Data @($certInfo))
+                    }
+                }
+                catch {
+                    Write-Log -Message "OAuth-Zertifikat nicht im lokalen Zertifikatsspeicher: $_" -Level "WARNING"
+                }
+            }
+        }
+    }
+    catch {
+        Write-Log -Message "AuthConfig-Abfrage fehlgeschlagen: $_" -Level "WARNING"
+    }
+
+    # --- Intra-Organization Connectors ---
+    try {
+        $intraOrg = Get-IntraOrganizationConnector -ErrorAction SilentlyContinue
+        if ($intraOrg) {
+            $iocData = foreach ($ioc in $intraOrg) {
+                [PSCustomObject]@{
+                    "Name"                  = $ioc.Name
+                    "Target Address"        = ($ioc.TargetAddressDomains -join ', ')
+                    "Discovery Endpoint"    = $ioc.DiscoveryEndpoint
+                    "Enabled"               = $ioc.Enabled
+                }
+            }
+            $oauthHTML += "<h3>Intra-Organization Connectors (OAuth)</h3>"
+            $oauthHTML += (ConvertTo-HTMLTable -Data $iocData)
+        }
+    }
+    catch {
+        Write-Log -Message "IntraOrganizationConnector-Abfrage fehlgeschlagen: $_" -Level "WARNING"
+    }
+
+    # --- OAuth 2.0 Client Profile ---
+    try {
+        $orgConfig = Get-OrganizationConfig -ErrorAction SilentlyContinue
+        if ($orgConfig) {
+            $oauthProfile = [PSCustomObject]@{
+                "OAuth2 Client Profile Enabled" = $orgConfig.OAuth2ClientProfileEnabled
+                "OAuth2 Client Profile"           = if ($orgConfig.OAuth2ClientProfileEnabled) { "✅ Aktiviert" } else { "❌ Deaktiviert" }
+            }
+            $oauthHTML += "<h3>OAuth 2.0 Client Profile (Modern Auth)</h3>"
+            $oauthHTML += (ConvertTo-HTMLTable -Data @($oauthProfile))
+            if (-not $orgConfig.OAuth2ClientProfileEnabled) {
+                $oauthHTML += "<p class='error'>⚠️ OAuth 2.0 ist nicht aktiviert! Dies ist für moderne Clients (Outlook 2016+, Mobile) und Hybrid-Szenarien erforderlich.</p>"
+            }
+        }
+    }
+    catch {
+        Write-Log -Message "OAuth2ClientProfile-Abfrage fehlgeschlagen: $_" -Level "WARNING"
+    }
+
+    # --- Certificate Based Authentication (CBA) ---
+    try {
+        $cbaEnabled = $false
+        $owaCba = Get-OwaVirtualDirectory -ErrorAction SilentlyContinue |
+            Where-Object { $_.ClientAuthCleanupLevel -ne $null -or $_.IISAuthenticationMethods -match "Certificate" }
+        if ($owaCba) {
+            $cbaData = foreach ($owa in $owaCba) {
+                [PSCustomObject]@{
+                    "Server"                    = $owa.Server
+                    "ClientAuthCleanupLevel"    = if ($owa.ClientAuthCleanupLevel) { $owa.ClientAuthCleanupLevel } else { "Nicht gesetzt" }
+                    "IIS Auth Methods"          = ($owa.IISAuthenticationMethods -join ', ')
+                }
+            }
+            $oauthHTML += "<h3>Certificate Based Authentication (CBA) - OWA</h3>"
+            $oauthHTML += (ConvertTo-HTMLTable -Data $cbaData)
+            $cbaEnabled = $true
+        }
+
+        # IIS Global CBA Check
+        try {
+            $isLocal = $env:COMPUTERNAME
+            $iisConfigPath = "$env:windir\System32\inetsrv\config\applicationHost.config"
+            if (Test-Path $iisConfigPath) {
+                [xml]$iisXml = Get-Content $iisConfigPath -ErrorAction SilentlyContinue
+                if ($iisXml) {
+                    $oauthHTML += "<h3>IIS SSL-Einstellungen (Certificate Mapping)</h3>"
+                    $oauthHTML += "<p><em>Für detaillierte CBA-Konfiguration prüfen Sie die IIS-Manager-Konsole "
+                    $oauthHTML += "unter 'SSL-Einstellungen' > 'Clientzertifikate' > 'Erforderlich' oder 'Akzeptieren'.</em></p>"
+                }
+            }
+        }
+        catch {
+            Write-Log -Message "IIS CBA-Check fehlgeschlagen: $_" -Level "WARNING"
+        }
+    }
+    catch {
+        Write-Log -Message "CBA-Abfrage fehlgeschlagen: $_" -Level "WARNING"
+    }
+
+    # --- Zusammenfassung ---
+    $oauthHTML += "<h3>OAuth/CBA Best Practices</h3>"
+    $oauthHTML += "<table><thead><tr><th>Bereich</th><th>Empfehlung</th></tr></thead><tbody>"
+    $oauthHTML += "<tr class='even'><td>OAuth 2.0</td><td>Aktivieren für moderne Clients und Hybrid</td></tr>"
+    $oauthHTML += "<tr class='odd'><td>Auth-Zertifikat</td><td>Vor Ablauf erneuern (min. 1 Jahr gültig)</td></tr>"
+    $oauthHTML += "<tr class='even'><td>Certificate Based Auth</td><td>Für sichere Client-Zugriffe ohne Passwort</td></tr>"
+    $oauthHTML += "<tr class='odd'><td>Intra-Org Connector</td><td>Für OAuth-Kommunikation zwischen Exchange und SharePoint/Skype</td></tr>"
+    $oauthHTML += "</tbody></table>"
+
+    New-HTMLSection -Title "OAuth / Certificate Based Auth" -Content $oauthHTML
+}
+
 #endregion
 
 #region ============================================================
@@ -5443,6 +6179,15 @@ function Get-DocSectionRegistry {
 
         # === HYBRID ===
         [PSCustomObject]@{ Key = "Hybrid";             Label = "Hybrid mit Exchange Online";        Category = "Hybrid / Cloud";     Function = "Get-HybridConfigurationInfo" }
+
+        # === NEU IN v1.6 ===
+        [PSCustomObject]@{ Key = "MessageQueue";       Label = "Message Queue Analyse";             Category = "Mail-Flow";          Function = "Get-MessageQueueInfo" }
+        [PSCustomObject]@{ Key = "MessageSizeLimits";  Label = "Message Size Limits";               Category = "Mail-Flow";          Function = "Get-MessageSizeLimitsInfo" }
+        [PSCustomObject]@{ Key = "PartnerApps";        Label = "Partner Applications";              Category = "Exchange Basis";     Function = "Get-PartnerApplicationsInfo" }
+        [PSCustomObject]@{ Key = "FederatedSharing";   Label = "Federated Sharing";                 Category = "Exchange Basis";     Function = "Get-FederatedSharingInfo" }
+        [PSCustomObject]@{ Key = "OAuthCBA";           Label = "OAuth / Certificate Based Auth";    Category = "Sicherheit";         Function = "Get-OAuthCertificateAuthInfo" }
+        [PSCustomObject]@{ Key = "ArchiveConfig";     Label = "Archive Konfiguration";              Category = "Empfänger";          Function = "Get-ArchiveConfigurationInfo" }
+        [PSCustomObject]@{ Key = "CalendarResource";   Label = "Calendar & Resource Mailbox";       Category = "Empfänger";          Function = "Get-CalendarResourceConfigInfo" }
     )
 }
 
@@ -5678,7 +6423,7 @@ function Show-DocumentationGui {
     [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Exchange Server Dokumentation v1.5" Height="920" Width="1120"
+        Title="Exchange Server Dokumentation v1.6" Height="920" Width="1120"
         WindowStartupLocation="CenterScreen" Background="#EDEDF2" ResizeMode="CanResize" MinWidth="900" MinHeight="700"
         FontFamily="Segoe UI, Arial, sans-serif">
     <Window.Resources>
@@ -5959,7 +6704,7 @@ function Show-DocumentationGui {
                 </StackPanel>
                 <!-- Version Badge -->
                 <Border Grid.Column="2" CornerRadius="6" Background="#FFFFFF22" Padding="10,6" Margin="0,0,16,0" VerticalAlignment="Center">
-                    <TextBlock Text="v1.5" Foreground="White" FontWeight="Bold" FontSize="13"/>
+                    <TextBlock Text="v1.6" Foreground="Black" FontWeight="Bold" FontSize="13"/>
                 </Border>
             </Grid>
         </Border>
@@ -6526,7 +7271,7 @@ try {
     # Konsolenausgabe
     Write-Host "`n" -NoNewline
     Write-Host "===============================================================" -ForegroundColor Cyan
-    Write-Host "  Exchange Dokumentation abgeschlossen! (v1.5 - 2019/SE)" -ForegroundColor Cyan
+    Write-Host "  Exchange Dokumentation abgeschlossen! (v1.6 - 2019/SE)" -ForegroundColor Cyan
     Write-Host "===============================================================" -ForegroundColor Cyan
     foreach ($f in $createdFiles) {
         Write-Host "  Datei: $f" -ForegroundColor White

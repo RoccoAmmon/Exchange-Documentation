@@ -2,6 +2,16 @@
 
 Alle signifikanten Änderungen am Projekt werden hier dokumentiert.
 
+## [1.6] - 2026-07-10
+- ✨ **7 neue Dokumentationsbereiche hinzugefügt**
+  - Message Queue Analyse (Warteschlangen, Status, Nachrichtenanzahl)
+  - Calendar & Resource Mailbox (Raum-/Ressourcenpostfächer, Buchungsoptionen)
+  - Exchange Archive (Archivpostfächer, Quotas, Auto-Expanding Archive)
+  - Exchange Message Size Limits (Org, Connector, Remote Domain, Benutzer)
+  - Exchange Partner Applications (SharePoint, Skype, CRM)
+  - Exchange Federated Sharing (Federation Trust, Organization Relationships)
+  - OAuth / Certificate Based Auth (Auth Server, Zertifikate, CBA)
+
 ## [1.5] - 2026-06-30
 - 🎨 **Komplettes GUI-Redesign**
   - Moderne WPF-Oberfläche mit Farbverlauf-Header und Version-Badge
