@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Exchange On-Premises Dokumentations-Skript (v1.7 - Exchange 2013/2016/2019 & SE Support)
+    Exchange On-Premises Dokumentations-Skript (v1.8 - Exchange 2013/2016/2019 & SE Support)
 .DESCRIPTION
     Erstellt eine umfassende HTML-Dokumentation der gesamten Exchange On-Premises Umgebung.
     Unterstützt Exchange Server 2019 und Exchange Server Subscription Edition (SE).
@@ -9,6 +9,15 @@
     WICHTIG: Diese Version verwendet CIM-Sessions mit automatischem DCOM-Fallback,
     sodass das Skript auch funktioniert, wenn WinRM (PowerShell Remoting) nicht
     korrekt konfiguriert ist.
+
+    NEU in v1.8 (AutoReseed & Fehlerkorrekturen):
+    - Automatic Database Reseed (AutoReseed) – AutoDagVolumesRootFolderPath, AutoDagDatabasesRootFolderPath, Spare Volumes
+    - Security CVE Prüfung – Live-Daten via BSI RSS-Feed (Exchange & Windows)
+    - FIP-FS Scan Engine – 4-stufige Fallback-Suche (rekursiv, .ini-Scan, Breitsuche, Registry)
+    - ConvertTo-HTMLTable – Link-Spalte wird nicht mehr escaped (HTML-Links funktionieren)
+    - Anti-Malware Status – Logik korrigiert (zeigt nur aktiv bei vorhandener Engine)
+    - CVE-Filter – Erweitert auf Microsoft-Produkte (Exchange + Windows)
+    - BSI RSS-Feed – Korrektes XML-Parsing via Invoke-WebRequest + [xml]
 
     NEU in v1.7 (Erweiterte System- & Sicherheitschecks):
     - Windows Features & Rollen (installierte Server Rollen)
@@ -22,7 +31,7 @@
     - FIP-FS Scan Engine Version (Anti-Malware Engine, Pattern-Update)
     - Exchange Setting Overrides (alle aktiven Overrides dokumentieren)
     - Exchange Server Component State (Maintenance Mode Erkennung)
-    - Security CVE Prüfung (CVE-2021-34470, CVE-2022-21978)
+    - Security CVE Prüfung (via BSI RSS-Feed, aktuelle Exchange-Sicherheitsmeldungen)
     - HTTP Proxy Konfiguration (WinHTTP, Registry, netsh)
     - Installierte Antivirenlösung (SecurityCenter, Registry, Defender-Status)
     - NIC Receive Buffer Analyse (10/25/40 Gbit/s, Intel/Microsoft-Empfehlung)
@@ -172,7 +181,7 @@
                           • FIP-FS Scan Engine Version (Anti-Malware Engine)
                           • Exchange Setting Overrides (alle aktiven Overrides)
                           • Exchange Server Component State (Maintenance Mode)
-                          • Security CVE Prüfung (CVE-2021-34470, CVE-2022-21978)
+                          • Security CVE Prüfung (via BSI RSS-Feed, aktuelle Exchange-Sicherheitsmeldungen)
                           • HTTP Proxy Konfiguration (WinHTTP, Registry, netsh)
                           • Installierte Antivirenlösung (SecurityCenter WMI, Registry, Defender)
                           • NIC Receive Buffer Analyse (10/25/40 Gbit/s, Intel/Microsoft-Empfehlung)
@@ -384,6 +393,8 @@ function New-HTMLSection {
         HTML-Inhalt der Sektion.
     .PARAMETER Level
         Überschriften-Level (1-3). Standard: 2
+    .PARAMETER Category
+        Themenbereich für die Sortierung im Inhaltsverzeichnis (z. B. "Hardware & OS", "Exchange Basis").
     #>
     [CmdletBinding()]
     param(
@@ -394,7 +405,10 @@ function New-HTMLSection {
         [string]$Content,
 
         [Parameter(Mandatory = $false)]
-        [int]$Level = 2
+        [int]$Level = 2,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Category = ""
     )
 
     $script:SectionCounter++
@@ -402,9 +416,10 @@ function New-HTMLSection {
 
     # Inhaltsverzeichnis-Eintrag
     [void]$script:TOCEntries.Add(@{
-        Title  = $Title
-        Anchor = $anchorId
-        Level  = $Level
+        Title    = $Title
+        Anchor   = $anchorId
+        Level    = $Level
+        Category = $Category
     })
 
     # HTML-Sektion erstellen
@@ -428,6 +443,8 @@ function ConvertTo-HTMLTable {
         Optionale Eigenschaftsauswahl.
     .PARAMETER NoDataMessage
         Nachricht, wenn keine Daten vorhanden sind.
+    .PARAMETER HeaderColor
+        Optionale Hintergrundfarbe für die Tabellenkopfzeile (z. B. "#005a9e").
     #>
     [CmdletBinding()]
     param(
@@ -438,7 +455,10 @@ function ConvertTo-HTMLTable {
         [string[]]$Properties,
 
         [Parameter(Mandatory = $false)]
-        [string]$NoDataMessage = "Keine Daten verfügbar."
+        [string]$NoDataMessage = "Keine Daten verfügbar.",
+
+        [Parameter(Mandatory = $false)]
+        [string]$HeaderColor = ""
     )
 
     if (-not $Data -or $Data.Count -eq 0) {
@@ -454,8 +474,9 @@ function ConvertTo-HTMLTable {
 
         # Header ermitteln
         $headers = $Data[0].PSObject.Properties.Name
+        $headerStyle = if ($HeaderColor) { " style='background-color: $HeaderColor; color: white;'" } else { "" }
         foreach ($header in $headers) {
-            $html += "<th>$header</th>"
+            $html += "<th$headerStyle>$header</th>"
         }
         $html += "</tr>`n</thead>`n<tbody>`n"
 
@@ -467,7 +488,12 @@ function ConvertTo-HTMLTable {
             foreach ($header in $headers) {
                 $value = $row.$header
                 if ($null -eq $value) { $value = "-" }
-                $html += "<td>$([System.Web.HttpUtility]::HtmlEncode($value.ToString()))</td>"
+                # "Link"-Spalten nicht encodieren (HTML-Tags erlauben)
+                if ($header -eq "Link") {
+                    $html += "<td>$value</td>"
+                } else {
+                    $html += "<td>$([System.Web.HttpUtility]::HtmlEncode($value.ToString()))</td>"
+                }
             }
             $html += "</tr>`n"
             $rowIndex++
@@ -562,6 +588,40 @@ function Get-RemoteRegistryValue {
     catch {
         Write-Log -Message "Remote Registry auf ${ComputerName} fehlgeschlagen ($ValueName): $_" -Level "WARNING"
         return $null
+    }
+}
+
+function Get-RemoteRegistrySubKeyNames {
+    <#
+    .SYNOPSIS
+        Listet SubKey-Namen eines Registry-Pfads remote über .NET-Methoden.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ComputerName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RegistryPath
+    )
+
+    try {
+        $regKey = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey(
+            [Microsoft.Win32.RegistryHive]::LocalMachine, $ComputerName
+        )
+        $subKey = $regKey.OpenSubKey($RegistryPath)
+        if ($subKey) {
+            $names = $subKey.GetSubKeyNames()
+            $subKey.Close()
+            $regKey.Close()
+            return $names
+        }
+        $regKey.Close()
+        return @()
+    }
+    catch {
+        Write-Log -Message "Remote Registry SubKey-Enumeration auf ${ComputerName} (${RegistryPath}) fehlgeschlagen: $_" -Level "WARNING"
+        return @()
     }
 }
 
@@ -959,7 +1019,7 @@ function Get-HardwareInformation {
         }
     }
 
-    New-HTMLSection -Title "Hardware-Informationen & Server-Details" -Content $allHardwareHTML
+    New-HTMLSection -Title "Hardware-Informationen & Server-Details" -Category "Hardware & OS" -Content $allHardwareHTML
 }
 
 # ---------------------------------------------------------------
@@ -1071,7 +1131,7 @@ function Get-InstalledSoftwareInfo {
         }
     }
 
-    New-HTMLSection -Title "Installierte Software" -Content $allSoftwareHTML
+    New-HTMLSection -Title "Installierte Software" -Category "Hardware & OS" -Content $allSoftwareHTML
 }
 
 # ---------------------------------------------------------------
@@ -1175,7 +1235,7 @@ function Get-NetworkConfigurationInfo {
         }
     }
 
-    New-HTMLSection -Title "Netzwerk-Konfiguration (NIC Speed & Performance)" -Content $allNetworkHTML
+    New-HTMLSection -Title "Netzwerk-Konfiguration (NIC Speed & Performance)" -Category "Hardware & OS" -Content $allNetworkHTML
 }
 
 # ---------------------------------------------------------------
@@ -1249,7 +1309,7 @@ function Get-PowerPlanInfo {
         }
     }
 
-    New-HTMLSection -Title "Power Plan & Performance-Einstellungen" -Content $allPowerHTML
+    New-HTMLSection -Title "Power Plan & Performance-Einstellungen" -Category "Hardware & OS" -Content $allPowerHTML
 }
 
 # ---------------------------------------------------------------
@@ -1382,7 +1442,7 @@ function Get-SMBv1StatusInfo {
         }
     }
 
-    New-HTMLSection -Title "SMBv1 Status (Sicherheit & Performance)" -Content $allSMBHTML
+    New-HTMLSection -Title "SMBv1 Status (Sicherheit & Performance)" -Category "Hardware & OS" -Content $allSMBHTML
 }
 
 # ---------------------------------------------------------------
@@ -1404,7 +1464,7 @@ function Get-DAGReplicationHealthInfo {
         if (-not $dags -or $dags.Count -eq 0) {
             Write-Log -Message "Keine DAG(s) in der Organisation konfiguriert" -Level "INFO"
             $dagHTML = "<p class='no-data'>Keine Database Availability Groups in dieser Organisation konfiguriert.</p>"
-            New-HTMLSection -Title "DAG Replication Health" -Content $dagHTML
+            New-HTMLSection -Title "DAG Replication Health" -Category "Exchange Basis" -Content $dagHTML
             return
         }
 
@@ -1432,7 +1492,7 @@ function Get-DAGReplicationHealthInfo {
                 # Replication Health pro Server
                 try {
                     $repHealth = Get-MailboxDatabaseCopyStatus -ErrorAction SilentlyContinue | 
-                        Where-Object { $_.DatabaseName -like "*" } |
+                        Where-Object { $_.ServerName -in $ExchangeServers } |
                         Select-Object -Property ServerName, DatabaseName, Status, ReplayQueueLength, CopyQueueLength, ContentIndexState |
                         Sort-Object DatabaseName
                     
@@ -1479,7 +1539,7 @@ function Get-DAGReplicationHealthInfo {
     }
 
     if ($dagHTML) {
-        New-HTMLSection -Title "DAG Replication Health" -Content $dagHTML
+        New-HTMLSection -Title "DAG Replication Health" -Category "Exchange Basis" -Content $dagHTML
     }
 }
 
@@ -1554,7 +1614,7 @@ function Get-ProcessorCoreAnalysis {
         }
     }
 
-    New-HTMLSection -Title "Processor Core Analyse" -Content $coreHTML
+    New-HTMLSection -Title "Processor Core Analyse" -Category "Hardware & OS" -Content $coreHTML
 }
 
 # ---------------------------------------------------------------
@@ -1632,7 +1692,7 @@ function Get-RAMRequirementsInfo {
         }
     }
 
-    New-HTMLSection -Title "RAM Requirements Check" -Content $ramHTML
+    New-HTMLSection -Title "RAM Requirements Check" -Category "Hardware & OS" -Content $ramHTML
 }
 
 # ---------------------------------------------------------------
@@ -1699,7 +1759,7 @@ function Get-CertificateExpirationInfo {
         $certHTML = "<p class='error'>Zertifikate konnten nicht abgerufen werden: $_</p>"
     }
 
-    New-HTMLSection -Title "Certificate Expiration Status" -Content $certHTML
+    New-HTMLSection -Title "Certificate Expiration Status" -Category "Exchange Basis" -Content $certHTML
 }
 
 # ---------------------------------------------------------------
@@ -1807,7 +1867,7 @@ function Get-IISAppPoolSettingsInfo {
                         "✅ Konfiguriert ($recycleDisplay)"
                     }
                     elseif ($isExchangePool) {
-                        "🟠 WARNUNG (Keine Recycling)"
+                        "✅ Entspricht Microsoft Exchange Standardkonfiguration"
                     }
                     else {
                         "ℹ️ Standard (Keine Recycling)"
@@ -1838,7 +1898,7 @@ function Get-IISAppPoolSettingsInfo {
         }
     }
 
-    New-HTMLSection -Title "IIS Application Pool Konfiguration" -Content $iisHTML
+    New-HTMLSection -Title "IIS Application Pool Konfiguration" -Category "Exchange Basis" -Content $iisHTML
 }
 
 # ---------------------------------------------------------------
@@ -1933,7 +1993,7 @@ function Get-ExchangeServiceStatusInfo {
         }
     }
 
-    New-HTMLSection -Title "Exchange Service Status" -Content $serviceHTML
+    New-HTMLSection -Title "Exchange Service Status" -Category "Exchange Basis" -Content $serviceHTML
 }
 
 # ---------------------------------------------------------------
@@ -1968,7 +2028,7 @@ function Get-PatchInformation {
         }
     }
 
-    New-HTMLSection -Title "Exchange Version & Build-Informationen" -Content $allPatchHTML
+    New-HTMLSection -Title "Exchange Version & Build-Informationen" -Category "Hardware & OS" -Content $allPatchHTML
 }
 
 # ---------------------------------------------------------------
@@ -2009,7 +2069,7 @@ function Get-FSMORoles {
         $fsmoHTML = "<p class='error'>Fehler: Ist das ActiveDirectory-Modul installiert? $_</p>"
     }
 
-    New-HTMLSection -Title "FSMO-Rollen" -Content $fsmoHTML
+    New-HTMLSection -Title "FSMO-Rollen" -Category "Active Directory" -Content $fsmoHTML
 }
 
 # ---------------------------------------------------------------
@@ -2139,7 +2199,7 @@ function Get-ADInformation {
         $adHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Active Directory Informationen & Schema-Version" -Content $adHTML
+    New-HTMLSection -Title "Active Directory Informationen & Schema-Version" -Category "Active Directory" -Content $adHTML
 }
 
 # ---------------------------------------------------------------
@@ -2156,6 +2216,7 @@ function Get-ExchangeServerOverview {
 
     try {
         $allExServers = Get-ExchangeServer -ErrorAction Stop |
+            Where-Object { $_.Name -in $ExchangeServers } |
             Select-Object Name, Edition, AdminDisplayVersion, ServerRole, Site,
                 @{N='IsMailbox';E={$_.IsMailboxServer}},
                 @{N='IsClientAccess';E={$_.IsClientAccessServer}},
@@ -2174,7 +2235,7 @@ function Get-ExchangeServerOverview {
                 }},
                 WhenCreated, WhenChanged
 
-        $exHTML += "<h3>Alle Exchange Server in der Organisation</h3>"
+        $exHTML += "<h3>Ausgewählte Exchange Server</h3>"
         $exHTML += "<p><strong>Erkannte Exchange Edition: $($script:ExchangeEdition)</strong></p>"
         $exHTML += (ConvertTo-HTMLTable -Data $allExServers)
     }
@@ -2183,7 +2244,7 @@ function Get-ExchangeServerOverview {
         $exHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Exchange Server Übersicht" -Content $exHTML
+    New-HTMLSection -Title "Exchange Server Übersicht" -Category "Exchange Basis" -Content $exHTML
 }
 
 # ---------------------------------------------------------------
@@ -2236,7 +2297,7 @@ function Get-OrganizationConfigInfo {
         $orgHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Exchange Organisationskonfiguration" -Content $orgHTML
+    New-HTMLSection -Title "Exchange Organisationskonfiguration" -Category "Exchange Basis" -Content $orgHTML
 }
 
 # ---------------------------------------------------------------
@@ -2255,6 +2316,7 @@ function Get-ExchangeURLs {
     try {
         # OWA mit Authentication
         $owa = Get-OwaVirtualDirectory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Server -in $ExchangeServers } |
             Select-Object Server, Name,
                 @{N='InternalURL';E={$_.InternalUrl}},
                 @{N='ExternalURL';E={$_.ExternalUrl}},
@@ -2268,6 +2330,7 @@ function Get-ExchangeURLs {
 
         # ECP mit Authentication
         $ecp = Get-EcpVirtualDirectory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Server -in $ExchangeServers } |
             Select-Object Server, Name,
                 @{N='InternalURL';E={$_.InternalUrl}},
                 @{N='ExternalURL';E={$_.ExternalUrl}},
@@ -2281,6 +2344,7 @@ function Get-ExchangeURLs {
 
         # ActiveSync mit Authentication
         $eas = Get-ActiveSyncVirtualDirectory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Server -in $ExchangeServers } |
             Select-Object Server, Name,
                 @{N='InternalURL';E={$_.InternalUrl}},
                 @{N='ExternalURL';E={$_.ExternalUrl}},
@@ -2293,6 +2357,7 @@ function Get-ExchangeURLs {
 
         # EWS mit Authentication
         $ews = Get-WebServicesVirtualDirectory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Server -in $ExchangeServers } |
             Select-Object Server, Name,
                 @{N='InternalURL';E={$_.InternalUrl}},
                 @{N='ExternalURL';E={$_.ExternalUrl}},
@@ -2306,6 +2371,7 @@ function Get-ExchangeURLs {
 
         # MAPI mit Authentication
         $mapi = Get-MapiVirtualDirectory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Server -in $ExchangeServers } |
             Select-Object Server, Name,
                 @{N='InternalURL';E={$_.InternalUrl}},
                 @{N='ExternalURL';E={$_.ExternalUrl}},
@@ -2313,6 +2379,7 @@ function Get-ExchangeURLs {
 
         # OAB mit Authentication
         $oabVDir = Get-OabVirtualDirectory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Server -in $ExchangeServers } |
             Select-Object Server, Name,
                 @{N='InternalURL';E={$_.InternalUrl}},
                 @{N='ExternalURL';E={$_.ExternalUrl}},
@@ -2325,11 +2392,13 @@ function Get-ExchangeURLs {
 
         # Autodiscover
         $autodiscover = Get-ClientAccessServer -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -in $ExchangeServers } |
             Select-Object Name,
                 @{N='AutoDiscoverServiceInternalUri';E={$_.AutoDiscoverServiceInternalUri}}
 
         # Outlook Anywhere
         $outlookAnywhere = Get-OutlookAnywhere -ErrorAction SilentlyContinue |
+            Where-Object { $_.Server -in $ExchangeServers } |
             Select-Object Server,
                 @{N='InternalHostname';E={$_.InternalHostname}},
                 @{N='ExternalHostname';E={$_.ExternalHostname}},
@@ -2461,7 +2530,7 @@ function Get-ExchangeURLs {
         $urlHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Exchange URLs / Virtuelle Verzeichnisse / Namespace & EEMS" -Content $urlHTML
+    New-HTMLSection -Title "Exchange URLs / Virtuelle Verzeichnisse / Namespace & EEMS" -Category "Exchange Basis" -Content $urlHTML
 }
 
 # ---------------------------------------------------------------
@@ -2478,7 +2547,9 @@ function Get-DatabaseAndDAGInfo {
 
     try {
         # Mailbox-Datenbanken
-        $databases = Get-MailboxDatabase -Status -ErrorAction Stop | Select-Object Name, Server,
+        $databases = Get-MailboxDatabase -Status -ErrorAction Stop |
+            Where-Object { $_.Server -in $ExchangeServers } |
+            Select-Object Name, Server,
             @{N='EdbFilePath';E={$_.EdbFilePath}},
             @{N='LogFolderPath';E={$_.LogFolderPath}},
             @{N='DatabaseSize_GB';E={if($_.DatabaseSize){[math]::Round($_.DatabaseSize.ToBytes()/1GB,2)}else{"N/A"}}},
@@ -2502,6 +2573,7 @@ function Get-DatabaseAndDAGInfo {
 
         # Datenbankkopien
         $dbCopies = Get-MailboxDatabaseCopyStatus * -ErrorAction SilentlyContinue |
+            Where-Object { $_.ServerName -in $ExchangeServers } |
             Select-Object Name, Status,
                 @{N='CopyQueueLength';E={$_.CopyQueueLength}},
                 @{N='ReplayQueueLength';E={$_.ReplayQueueLength}},
@@ -2560,7 +2632,7 @@ function Get-DatabaseAndDAGInfo {
         $dbHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Datenbanken & DAG-Konfiguration" -Content $dbHTML
+    New-HTMLSection -Title "Datenbanken & DAG-Konfiguration" -Category "Exchange Basis" -Content $dbHTML
 }
 
 # ---------------------------------------------------------------
@@ -2607,7 +2679,7 @@ function Get-PublicFolderInfo {
         $pfHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Public Folder" -Content $pfHTML
+    New-HTMLSection -Title "Public Folder" -Category "Empfänger" -Content $pfHTML
 }
 
 # ---------------------------------------------------------------
@@ -2624,6 +2696,7 @@ function Get-SendConnectorInfo {
 
     try {
         $sendConnectors = Get-SendConnector -ErrorAction Stop |
+            Where-Object { @($_.SourceTransportServers | Where-Object { $_ -in $ExchangeServers }).Count -gt 0 } |
             Select-Object Name,
                 @{N='AddressSpaces';E={$_.AddressSpaces -join ", "}},
                 @{N='SmartHosts';E={$_.SmartHosts -join ", "}},
@@ -2648,7 +2721,7 @@ function Get-SendConnectorInfo {
         $scHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Sendeconnectoren" -Content $scHTML
+    New-HTMLSection -Title "Sendeconnectoren" -Category "Mail-Flow" -Content $scHTML
 }
 
 # ---------------------------------------------------------------
@@ -2665,6 +2738,7 @@ function Get-ReceiveConnectorInfo {
 
     try {
         $receiveConnectors = Get-ReceiveConnector -ErrorAction Stop |
+            Where-Object { $_.Server -in $ExchangeServers } |
             Select-Object Identity, Server,
                 @{N='Bindings';E={$_.Bindings -join ", "}},
                 @{N='RemoteIPRanges';E={($_.RemoteIPRanges | Select-Object -First 10) -join ", "}},
@@ -2687,7 +2761,7 @@ function Get-ReceiveConnectorInfo {
         $rcHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Empfangsconnectoren" -Content $rcHTML
+    New-HTMLSection -Title "Empfangsconnectoren" -Category "Mail-Flow" -Content $rcHTML
 }
 
 # ---------------------------------------------------------------
@@ -2722,7 +2796,7 @@ function Get-RemoteDomainInfo {
         $rdHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Remote Domains" -Content $rdHTML
+    New-HTMLSection -Title "Remote Domains" -Category "Mail-Flow" -Content $rdHTML
 }
 
 # ---------------------------------------------------------------
@@ -2750,7 +2824,7 @@ function Get-AcceptedDomainInfo {
         $adHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Accepted Domains" -Content $adHTML
+    New-HTMLSection -Title "Accepted Domains" -Category "Mail-Flow" -Content $adHTML
 }
 
 # ---------------------------------------------------------------
@@ -2837,7 +2911,7 @@ function Get-MXRecordInfo {
         $mxHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "MX-Records & DNS-Prüfung" -Content $mxHTML
+    New-HTMLSection -Title "MX-Records & DNS-Prüfung" -Category "DNS & Records" -Content $mxHTML
 }
 
 # ---------------------------------------------------------------
@@ -2868,7 +2942,7 @@ function Get-EmailAddressPolicyInfo {
         $eapHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "E-Mail-Adressrichtlinien" -Content $eapHTML
+    New-HTMLSection -Title "E-Mail-Adressrichtlinien" -Category "Empfänger" -Content $eapHTML
 }
 
 # ---------------------------------------------------------------
@@ -2914,7 +2988,7 @@ function Get-AddressListInfo {
         $alHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Adresslisten & Globale Adressliste" -Content $alHTML
+    New-HTMLSection -Title "Adresslisten & Globale Adressliste" -Category "Empfänger" -Content $alHTML
 }
 
 # ---------------------------------------------------------------
@@ -2948,7 +3022,7 @@ function Get-OABInfo {
         $oabHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Offline-Adressbuch (OAB)" -Content $oabHTML
+    New-HTMLSection -Title "Offline-Adressbuch (OAB)" -Category "Empfänger" -Content $oabHTML
 }
 
 # ---------------------------------------------------------------
@@ -3007,7 +3081,7 @@ function Get-MobileDeviceInfo {
         $mdHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Mobile Device Konfiguration" -Content $mdHTML
+    New-HTMLSection -Title "Mobile Device Konfiguration" -Category "Sicherheit" -Content $mdHTML
 }
 
 # ---------------------------------------------------------------
@@ -3056,7 +3130,7 @@ function Get-CertificateInfo {
         }
     }
 
-    New-HTMLSection -Title "Zertifikate" -Content $certHTML
+    New-HTMLSection -Title "Zertifikate" -Category "Exchange Basis" -Content $certHTML
 }
 
 # ---------------------------------------------------------------
@@ -3100,7 +3174,7 @@ function Get-TransportRuleInfo {
         $trHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Transport-Regeln (Mailflow Rules)" -Content $trHTML
+    New-HTMLSection -Title "Transport-Regeln (Mailflow Rules)" -Category "Mail-Flow" -Content $trHTML
 }
 
 # ---------------------------------------------------------------
@@ -3119,7 +3193,7 @@ function Get-TransportComponentStorageInfo {
     try {
         # Transport-Konfiguration abrufen
         $transportConfig = Get-TransportConfig -ErrorAction Stop
-        $transportServers = Get-TransportServer -ErrorAction Stop
+        $transportServers = Get-TransportServer -ErrorAction Stop | Where-Object { $_.Name -in $ExchangeServers }
 
         # === Queue-Datenbank und Queue-Logs ===
         $queueStorage = @()
@@ -3164,7 +3238,7 @@ function Get-TransportComponentStorageInfo {
         }
 
         # === SMTP-Protokolllogs für Empfangsconnectoren ===
-        $receiveConnectors = Get-ReceiveConnector -ErrorAction SilentlyContinue
+        $receiveConnectors = Get-ReceiveConnector -ErrorAction SilentlyContinue | Where-Object { $_.Server -in $ExchangeServers }
         $smtpReceiveLogs = @()
         if ($receiveConnectors) {
             foreach ($connector in $receiveConnectors) {
@@ -3183,7 +3257,7 @@ function Get-TransportComponentStorageInfo {
         }
 
         # === SMTP-Protokolllogs für Sendeconnectoren ===
-        $sendConnectors = Get-SendConnector -ErrorAction SilentlyContinue
+        $sendConnectors = Get-SendConnector -ErrorAction SilentlyContinue | Where-Object { @($_.SourceTransportServers | Where-Object { $_ -in $ExchangeServers }).Count -gt 0 }
         if ($sendConnectors) {
             foreach ($connector in $sendConnectors) {
                 try {
@@ -3273,7 +3347,7 @@ function Get-TransportComponentStorageInfo {
         $tcHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Transportkomponenten - Physische Speicherorte" -Content $tcHTML
+    New-HTMLSection -Title "Transportkomponenten - Physische Speicherorte" -Category "Mail-Flow" -Content $tcHTML
 }
 
 # ---------------------------------------------------------------
@@ -3307,7 +3381,7 @@ function Get-MailboxStatisticsOverview {
         $mbxHTML += "<p><strong>Mailboxen mit Archiv:</strong> $archiveCount</p>"
 
         # Mailboxen pro DB
-        $databases = Get-MailboxDatabase -ErrorAction SilentlyContinue
+        $databases = Get-MailboxDatabase -ErrorAction SilentlyContinue | Where-Object { $_.Server -in $ExchangeServers }
         $dbStats = @()
         foreach ($db in $databases) {
             try {
@@ -3331,7 +3405,7 @@ function Get-MailboxStatisticsOverview {
         $mbxHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Mailbox-Statistiken & Empfänger-Übersicht" -Content $mbxHTML
+    New-HTMLSection -Title "Mailbox-Statistiken & Empfänger-Übersicht" -Category "Empfänger" -Content $mbxHTML
 }
 
 # ---------------------------------------------------------------
@@ -3363,7 +3437,7 @@ function Get-ThrottlingPolicyInfo {
         $tpHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Throttling Policies" -Content $tpHTML
+    New-HTMLSection -Title "Throttling Policies" -Category "Sicherheit" -Content $tpHTML
 }
 
 # ---------------------------------------------------------------
@@ -3409,7 +3483,7 @@ function Get-RetentionPolicyInfo {
         $retHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Retention Policies & Journal Rules" -Content $retHTML
+    New-HTMLSection -Title "Retention Policies & Journal Rules" -Category "Compliance" -Content $retHTML
 }
 
 # ---------------------------------------------------------------
@@ -3446,7 +3520,7 @@ function Get-RBACInfo {
         $rbacHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "RBAC - Administratorenrollen & Mitglieder" -Content $rbacHTML
+    New-HTMLSection -Title "RBAC - Administratorenrollen & Mitglieder" -Category "Exchange Basis" -Content $rbacHTML
 }
 
 # ---------------------------------------------------------------
@@ -3517,7 +3591,7 @@ function Get-EventLogInfo {
         }
     }
 
-    New-HTMLSection -Title "Event Logs (letzte 7 Tage - Fehler/Kritisch)" -Content $elHTML
+    New-HTMLSection -Title "Event Logs (letzte 7 Tage - Fehler/Kritisch)" -Category "Hardware & OS" -Content $elHTML
 }
 
 # ---------------------------------------------------------------
@@ -3552,7 +3626,7 @@ function Get-SecurityAndAuthInfo {
 
     # --- SMTP Auth Einstellungen pro Receive Connector ---
     try {
-        $rcConnectors = Get-ReceiveConnector -ErrorAction SilentlyContinue
+        $rcConnectors = Get-ReceiveConnector -ErrorAction SilentlyContinue | Where-Object { $_.Server -in $ExchangeServers }
         if ($rcConnectors) {
             $authData = foreach ($rc in $rcConnectors) {
                 [PSCustomObject]@{
@@ -3603,7 +3677,7 @@ function Get-SecurityAndAuthInfo {
         Write-Log -Message "OAuth-Status Abfrage fehlgeschlagen: $_" -Level "WARNING"
     }
 
-    New-HTMLSection -Title "Sicherheit & Authentifizierung" -Content $secHTML
+    New-HTMLSection -Title "Sicherheit & Authentifizierung" -Category "Sicherheit" -Content $secHTML
 }
 
 # ---------------------------------------------------------------
@@ -3704,7 +3778,7 @@ function Get-AntiSpamMalwareInfo {
         $asmHTML = "<p class='no-data'>Anti-Spam/Anti-Malware Agents sind möglicherweise nicht auf Mailbox-Servern aktiviert. Prüfen Sie Edge Transport Server.</p>"
     }
 
-    New-HTMLSection -Title "Anti-Spam / Anti-Malware Konfiguration" -Content $asmHTML
+    New-HTMLSection -Title "Anti-Spam / Anti-Malware Konfiguration" -Category "Sicherheit" -Content $asmHTML
 }
 
 # ---------------------------------------------------------------
@@ -3789,7 +3863,7 @@ function Get-ComplianceInfo {
         Write-Log -Message "MailboxSearch Abfrage fehlgeschlagen: $_" -Level "WARNING"
     }
 
-    New-HTMLSection -Title "Compliance & Data Loss Prevention" -Content $compHTML
+    New-HTMLSection -Title "Compliance & Data Loss Prevention" -Category "Compliance" -Content $compHTML
 }
 
 # ---------------------------------------------------------------
@@ -3806,7 +3880,9 @@ function Get-MailboxQuotaInfo {
 
     # --- Datenbank-Quotas ---
     try {
-        $databases = Get-MailboxDatabase -ErrorAction Stop | Select-Object Name,
+        $databases = Get-MailboxDatabase -ErrorAction Stop |
+            Where-Object { $_.Server -in $ExchangeServers } |
+            Select-Object Name,
             @{N='ProhibitSend_GB';E={
                 if ($_.ProhibitSendQuota -and $_.ProhibitSendQuota.ToString() -ne "Unlimited") {
                     [math]::Round($_.ProhibitSendQuota.Value.ToBytes() / 1GB, 2)
@@ -3861,7 +3937,7 @@ function Get-MailboxQuotaInfo {
         Write-Log -Message "Individuelle Quota Abfrage fehlgeschlagen: $_" -Level "WARNING"
     }
 
-    New-HTMLSection -Title "Mailbox-Quotas & Speicher-Limits" -Content $quotaHTML
+    New-HTMLSection -Title "Mailbox-Quotas & Speicher-Limits" -Category "Empfänger" -Content $quotaHTML
 }
 
 # ---------------------------------------------------------------
@@ -3879,7 +3955,8 @@ function Get-SMTPRelayInfo {
     # --- Receive Connectors mit Anonymous Relay ---
     try {
         $relayConnectors = Get-ReceiveConnector -ErrorAction SilentlyContinue |
-            Where-Object { $_.PermissionGroups -match "Anonymous" -or $_.Name -like "*Relay*" -or $_.Name -like "*Application*" }
+            Where-Object { $_.PermissionGroups -match "Anonymous" -or $_.Name -like "*Relay*" -or $_.Name -like "*Application*" } |
+            Where-Object { $_.Server -in $ExchangeServers }
 
         if ($relayConnectors) {
             $rcData = foreach ($rc in $relayConnectors) {
@@ -3920,7 +3997,7 @@ function Get-SMTPRelayInfo {
     $relayHTML += "<tr class='even'><td>Backup-Systeme (Veeam, Commvault)</td><td>IP-Beschränkung, Alert-Mailbox prüfen</td></tr>"
     $relayHTML += "</tbody></table>"
 
-    New-HTMLSection -Title "SMTP-Relay Konfiguration" -Content $relayHTML
+    New-HTMLSection -Title "SMTP-Relay Konfiguration" -Category "Mail-Flow" -Content $relayHTML
 }
 
 # ---------------------------------------------------------------
@@ -4032,7 +4109,7 @@ function Get-FirewallInfo {
     $fwHTML += "<p><em>Hinweis: DAG-Replikationsport kann mit Set-DatabaseAvailabilityGroup -ReplicationPort angepasst werden. "
     $fwHTML += "Dokumentieren Sie zusätzlich Load-Balancer-VIPs und externe Firewall-NAT-Regeln.</em></p>"
 
-    New-HTMLSection -Title "Firewall-Regeln & Port-Anforderungen" -Content $fwHTML
+    New-HTMLSection -Title "Firewall-Regeln & Port-Anforderungen" -Category "Hardware & OS" -Content $fwHTML
 }
 
 # ---------------------------------------------------------------
@@ -4050,7 +4127,7 @@ function Get-LicensingInfo {
 
     # --- Exchange Server Edition (Standard/Enterprise) ---
     try {
-        $exServers = Get-ExchangeServer -ErrorAction Stop
+        $exServers = Get-ExchangeServer -ErrorAction Stop | Where-Object { $_.Name -in $ExchangeServers }
         $exLicData = foreach ($ex in $exServers) {
             $dbCount = (Get-MailboxDatabase -Server $ex.Name -ErrorAction SilentlyContinue | Measure-Object).Count
             [PSCustomObject]@{
@@ -4132,7 +4209,7 @@ function Get-LicensingInfo {
         }
     }
 
-    New-HTMLSection -Title "Lizenzierung (Exchange & Windows)" -Content $licHTML
+    New-HTMLSection -Title "Lizenzierung (Exchange & Windows)" -Category "Hardware & OS" -Content $licHTML
 }
 
 # ---------------------------------------------------------------
@@ -4220,7 +4297,7 @@ function Get-DiskSpaceInfo {
         }
     }
 
-    New-HTMLSection -Title "Disk Space (DB/Logs/Temp)" -Content $diskHTML
+    New-HTMLSection -Title "Disk Space (DB/Logs/Temp)" -Category "Hardware & OS" -Content $diskHTML
 }
 
 # ---------------------------------------------------------------
@@ -4294,7 +4371,7 @@ function Get-LDAPConnectivityInfo {
         }
     }
 
-    New-HTMLSection -Title "LDAP Konnektivität (Domain Controller)" -Content $ldapHTML
+    New-HTMLSection -Title "LDAP Konnektivität (Domain Controller)" -Category "Hardware & OS" -Content $ldapHTML
 }
 
 # ---------------------------------------------------------------
@@ -4363,7 +4440,7 @@ function Get-RPCPortStatusInfo {
         }
     }
 
-    New-HTMLSection -Title "RPC Port 135 Status" -Content $rpcHTML
+    New-HTMLSection -Title "RPC Port 135 Status" -Category "Hardware & OS" -Content $rpcHTML
 }
 
 # ---------------------------------------------------------------
@@ -4412,7 +4489,7 @@ function Get-MAPIConnectivityInfo {
         $mapiHTML += "<p class='error'>MAPI-Information nicht verfügbar: $_</p>"
     }
 
-    New-HTMLSection -Title "MAPI Connectivity (Outlook)" -Content $mapiHTML
+    New-HTMLSection -Title "MAPI Connectivity (Outlook)" -Category "Exchange Basis" -Content $mapiHTML
 }
 
 # ---------------------------------------------------------------
@@ -4429,9 +4506,12 @@ function Get-DatabaseCopiesInfo {
     $dbCopyHTML = ""
 
     try {
-        $dbList = Get-MailboxDatabase -ErrorAction SilentlyContinue
+        $dbList = Get-MailboxDatabase -ErrorAction SilentlyContinue | Where-Object { $_.Server -in $ExchangeServers }
         
-        if ($dbList) {
+        if (-not $dbList) {
+            $dbCopyHTML += "<p class='no-data'>Keine Mailbox-Datenbanken auf den ausgewählten Servern gefunden.</p>"
+        }
+        else {
             $dbCopyData = @()
             foreach ($db in $dbList) {
                 $copies = Get-MailboxDatabaseCopyStatus -Identity $db.Identity -ErrorAction SilentlyContinue
@@ -4448,8 +4528,11 @@ function Get-DatabaseCopiesInfo {
             }
 
             if ($dbCopyData) {
-                $dbCopyHTML += "<h3>Datenbankgesamt und Kopien</h3>"
+                $dbCopyHTML += "<h3>Datenbanken und Kopien</h3>"
                 $dbCopyHTML += (ConvertTo-HTMLTable -Data $dbCopyData)
+            }
+            else {
+                $dbCopyHTML += "<p class='no-data'>Keine Datenbankkopien gefunden – Datenbanken haben nur eine einzelne Kopie (keine DAG-Replikation).</p>"
             }
         }
     }
@@ -4459,7 +4542,7 @@ function Get-DatabaseCopiesInfo {
     }
 
     $dbCopyHTML += "<p><strong>Hinweis:</strong> In einer DAG sollten kritische Datenbanken mehrere Kopien haben.</p>"
-    New-HTMLSection -Title "Database Copies & Redundanz" -Content $dbCopyHTML
+    New-HTMLSection -Title "Database Copies & Redundanz" -Category "Exchange Basis" -Content $dbCopyHTML
 }
 
 # ---------------------------------------------------------------
@@ -4550,7 +4633,7 @@ function Get-AntivirusExclusionsInfo {
         }
     }
 
-    New-HTMLSection -Title "Antivirus Ausschlüsse" -Content $serverHTML
+    New-HTMLSection -Title "Antivirus Ausschlüsse" -Category "Sicherheit" -Content $serverHTML
 }
 
 # ---------------------------------------------------------------
@@ -4642,7 +4725,7 @@ function Get-DKIMInfo {
     $dkimHTML += "Prüfen Sie ob die DKIM-Signierung am Mail-Gateway, Smarthost oder via Transport-Agent erfolgt und "
     $dkimHTML += "ob die DNS-Records mit den verwendeten Selektoren übereinstimmen.</em></p>"
 
-    New-HTMLSection -Title "DKIM-Konfiguration" -Content $dkimHTML
+    New-HTMLSection -Title "DKIM-Konfiguration" -Category "DNS & Records" -Content $dkimHTML
 }
 
 # ---------------------------------------------------------------
@@ -4661,6 +4744,8 @@ function Get-TLSSSLConfigurationInfo {
 
     # --- Best Practice Matrix (Microsoft Empfehlungen für Exchange) ---
     $bestPractices = @{
+        "SSL 2.0" = @{ Recommended = $false; Why = "Veraltet & unsicher (DROWN). MUSS deaktiviert sein." }
+        "SSL 3.0" = @{ Recommended = $false; Why = "Veraltet & unsicher (POODLE). MUSS deaktiviert sein." }
         "TLS 1.0" = @{ Recommended = $false; Why = "Veraltet & unsicher (POODLE). MUSS deaktiviert sein." }
         "TLS 1.1" = @{ Recommended = $false; Why = "Veraltet (RFC 8996 veraltet). SOLLTE deaktiviert sein." }
         "TLS 1.2" = @{ Recommended = $true;  Why = "ERFORDERLICH. Mindeststandard für alle Verbindungen." }
@@ -4675,9 +4760,9 @@ function Get-TLSSSLConfigurationInfo {
             $tlsVersions = @{}
             $regPath = "SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols"
             
-            Write-Log -Message "Lese TLS-Versionen aus Registry ($server)..." -Level "INFO"
+            Write-Log -Message "Lese TLS/SSL-Versionen aus Registry ($server)..." -Level "INFO"
             
-            foreach ($tlsVer in @("TLS 1.0", "TLS 1.1", "TLS 1.2", "TLS 1.3")) {
+            foreach ($tlsVer in @("SSL 2.0", "SSL 3.0", "TLS 1.0", "TLS 1.1", "TLS 1.2", "TLS 1.3")) {
                 try {
                     $regSubPath = "$regPath\$tlsVer\Server"
                     $enabled = Get-RemoteRegistryValue -ComputerName $server -RegistryPath $regSubPath -ValueName "Enabled"
@@ -4702,19 +4787,19 @@ function Get-TLSSSLConfigurationInfo {
             $tlsVersionsData = @()
             $overallSecurityScore = 100
             
-            foreach ($tlsVer in @("TLS 1.0", "TLS 1.1", "TLS 1.2", "TLS 1.3")) {
+            foreach ($tlsVer in @("SSL 2.0", "SSL 3.0", "TLS 1.0", "TLS 1.1", "TLS 1.2", "TLS 1.3")) {
                 $status = $tlsVersions[$tlsVer].Enabled
                 $isEnabled = ($tlsVersions[$tlsVer].EnabledValue -eq 1)
                 $recommended = $tlsVersions[$tlsVer].Recommended
                 
                 # Bewertung
-                if ($tlsVer -eq "TLS 1.0" -and $isEnabled) {
-                    $assessment = "🔴 KRITISCH - MUSS deaktiviert sein!"
+                if ($tlsVer -in @("SSL 2.0", "SSL 3.0", "TLS 1.0", "TLS 1.1") -and $isEnabled) {
+                    $assessment = "🔴 KRITISCH - Muss deaktiviert sein!"
                     $overallSecurityScore -= 40
                 }
-                elseif ($tlsVer -eq "TLS 1.1" -and $isEnabled) {
-                    $assessment = "🟡 WARNUNG - SOLLTE deaktiviert sein (RFC 8996)"
-                    $overallSecurityScore -= 15
+                elseif ($tlsVer -in @("SSL 2.0", "SSL 3.0", "TLS 1.0", "TLS 1.1") -and -not $isEnabled) {
+                    $assessment = "✅ SEHR GUT - Deaktiviert"
+                    $overallSecurityScore += 5
                 }
                 elseif ($tlsVer -eq "TLS 1.2" -and -not $isEnabled) {
                     $assessment = "🔴 KRITISCH - Muss aktiviert sein (Exchange Anforderung)!"
@@ -4760,50 +4845,79 @@ function Get-TLSSSLConfigurationInfo {
             # ===== Cipher Suites (via PowerShell Remoting) =====
             try {
                 Write-Log -Message "Lese Cipher Suites von $server..." -Level "INFO"
+
+                # Microsoft-empfohlene Cipher Suites (TLS 1.2)
+                $recommendedCiphers = @(
+                    'TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384',
+                    'TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256',
+                    'TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384',
+                    'TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256',
+                    'TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384',
+                    'TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256',
+                    'TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384',
+                    'TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256'
+                )
+
                 $cipherData = Invoke-Command -ComputerName $server -ScriptBlock {
                     try {
-                        $winRMPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp\DefaultSecureProtocols"
-                        $dsPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers"
-                        
-                        $tlsDefault = Get-ItemProperty -Path $winRMPath -ErrorAction SilentlyContinue
-                        $ciphers = Get-ChildItem -Path $dsPath -ErrorAction SilentlyContinue
-                        
+                        $suites = Get-TlsCipherSuite -ErrorAction Stop
                         return @{
-                            TLSDefault = $tlsDefault.DefaultSecureProtocols
-                            CipherCount = $ciphers.Count
-                            CipherNames = ($ciphers | Select-Object -ExpandProperty PSChildName | Select-Object -First 20) -join ", "
+                            AllSuites  = $suites | ForEach-Object { $_.Name }
+                            Count      = $suites.Count
                         }
                     }
-                    catch { return $null }
+                    catch {
+                        # Fallback: Registry auslesen
+                        $regPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Cryptography\Configuration\Local\SSL\00010002"
+                        $order = Get-ItemProperty -Path $regPath -Name Functions -ErrorAction SilentlyContinue
+                        if ($order.Functions) {
+                            $names = $order.Functions -split ','
+                            return @{
+                                AllSuites  = $names
+                                Count      = $names.Count
+                            }
+                        }
+                        return $null
+                    }
                 } -ErrorAction SilentlyContinue
-                
-                if ($cipherData) {
+
+                if ($cipherData -and $cipherData.AllSuites) {
                     $serverHTML += "<h4>Cipher Suites Konfiguration</h4>"
-                    $cipherHTML = "<p><strong>Standard-Protokolle:</strong> "
-                    if ($cipherData.TLSDefault) {
-                        # Dekodierung der Hexadezimalwerte
-                        if ($cipherData.TLSDefault -eq 0x00000008) {
-                            $cipherHTML += "TLS 1.0 (VERALTET!)"
-                        }
-                        elseif ($cipherData.TLSDefault -eq 0x00000020) {
-                            $cipherHTML += "TLS 1.1 (VERALTET!)"
-                        }
-                        elseif ($cipherData.TLSDefault -eq 0x00000080) {
-                            $cipherHTML += "TLS 1.2 (Standard)"
-                        }
-                        else {
-                            $cipherHTML += "Hex: 0x$([Convert]::ToString($cipherData.TLSDefault, 16))"
+
+                    $cipherRows = @()
+                    $nonRecommendedCount = 0
+                    foreach ($suite in $cipherData.AllSuites) {
+                        $isRecommended = $suite -in $recommendedCiphers
+                        $status = if ($isRecommended) { "✅ Empfohlen" } else { "⚠️ Nicht empfohlen" }
+                        if (-not $isRecommended) { $nonRecommendedCount++ }
+                        $cipherRows += [PSCustomObject]@{
+                            "Cipher Suite"       = $suite
+                            "Bewertung"          = $status
                         }
                     }
-                    $cipherHTML += "</p>"
-                    $cipherHTML += "<p><strong>Konfigurierte Cipher Suites:</strong> $($cipherData.CipherCount) Suites konfiguriert</p>"
-                    $cipherHTML += "<p><strong>Aktive Ciphers (Top 20):</strong></p><pre style='background-color:#f5f5f5; padding:10px; overflow-x:auto;'>$($cipherData.CipherNames)</pre>"
-                    $serverHTML += $cipherHTML
+
+                    $serverHTML += "<p><strong>Gefundene Cipher Suites:</strong> $($cipherData.Count) konfiguriert"
+                    if ($nonRecommendedCount -gt 0) {
+                        $serverHTML += " | ⚠️ $nonRecommendedCount nicht von Microsoft empfohlen"
+                    }
+                    $serverHTML += "</p>"
+
+                    if ($nonRecommendedCount -gt 0) {
+                        $serverHTML += "<div style='background-color:#FFF3E0; border:1px solid #FF9800; border-radius:4px; padding:8px 12px; margin:6px 0;'>"
+                        $serverHTML += "<strong>⚠️ Warnung:</strong> Es sind $nonRecommendedCount Cipher Suite(s) aktiv, die nicht in der Microsoft-Empfehlung enthalten sind. "
+                        $serverHTML += "Nicht empfohlene Suites können die Sicherheit beeinträchtigen oder Kompatibilitätsprobleme verursachen."
+                        $serverHTML += "</div>"
+                    }
+
+                    $serverHTML += (ConvertTo-HTMLTable -Data $cipherRows)
+                }
+                else {
+                    $serverHTML += "<p class='no-data'>Cipher Suites konnten nicht ausgelesen werden (kein Zugriff auf Get-TlsCipherSuite).</p>"
                 }
             }
             catch {
                 Write-Log -Message "Cipher Suite Abfrage fehlgeschlagen für ${server}: $_" -Level "WARNING"
-                $serverHTML += "<p class='no-data'>Cipher Suite-Details nicht abrufbar (benötigt Invoke-Command).</p>"
+                $serverHTML += "<p class='no-data'>Cipher Suite-Details nicht abrufbar: $_</p>"
             }
             
             # ===== Receive Connectors TLS Konfiguration =====
@@ -4925,7 +5039,7 @@ function Get-TLSSSLConfigurationInfo {
             
             # Verweis auf MS-Dokumentation
             $serverHTML += "<h4>Weiterführende Ressourcen</h4>"
-            $serverHTML += "<p><em><a href='https://docs.microsoft.com/en-us/Exchange/security-and-compliance/best-practices-for-security' target='_blank'>Microsoft Exchange Security Best Practices</a></em></p>"
+            $serverHTML += "<p><em>Siehe Microsoft Exchange Security Best Practices (learn.microsoft.com)</em></p>"
             $serverHTML += "<p><em><a href='https://docs.microsoft.com/en-us/windows-server/security/tls/tls-registry-settings' target='_blank'>TLS Registry Settings - Microsoft Docs</a></em></p>"
             
             $tlsHTML += $serverHTML
@@ -4936,7 +5050,7 @@ function Get-TLSSSLConfigurationInfo {
         }
     }
 
-    New-HTMLSection -Title "TLS/SSL Konfiguration & Best Practices" -Content $tlsHTML
+    New-HTMLSection -Title "TLS/SSL Konfiguration & Best Practices" -Category "Sicherheit & TLS" -Content $tlsHTML
 }
 
 # ---------------------------------------------------------------
@@ -4970,14 +5084,14 @@ function Get-HybridConfigurationInfo {
         }
         else {
             $hybridHTML += "<p class='no-data'>Keine Hybrid-Konfiguration gefunden. Die Umgebung ist nicht hybrid konfiguriert.</p>"
-            New-HTMLSection -Title "Hybrid-Konfiguration (Exchange Online)" -Content $hybridHTML
+            New-HTMLSection -Title "Hybrid-Konfiguration (Exchange Online)" -Category "Hybrid / Cloud" -Content $hybridHTML
             return
         }
     }
     catch {
         Write-Log -Message "Hybrid-Konfiguration nicht vorhanden oder Fehler: $_" -Level "WARNING"
         $hybridHTML += "<p class='no-data'>Keine Hybrid-Konfiguration vorhanden oder Cmdlet nicht verfügbar. Umgebung ist möglicherweise nicht hybrid.</p>"
-        New-HTMLSection -Title "Hybrid-Konfiguration (Exchange Online)" -Content $hybridHTML
+        New-HTMLSection -Title "Hybrid-Konfiguration (Exchange Online)" -Category "Hybrid / Cloud" -Content $hybridHTML
         return
     }
 
@@ -5193,7 +5307,7 @@ function Get-HybridConfigurationInfo {
         Write-Log -Message "AAD Connect Check fehlgeschlagen: $_" -Level "WARNING"
     }
 
-    New-HTMLSection -Title "Hybrid-Konfiguration (Exchange Online)" -Content $hybridHTML
+    New-HTMLSection -Title "Hybrid-Konfiguration (Exchange Online)" -Category "Hybrid / Cloud" -Content $hybridHTML
 }
 
 # ---------------------------------------------------------------
@@ -5275,7 +5389,7 @@ function Get-MessageQueueInfo {
         }
     }
 
-    New-HTMLSection -Title "Message Queue Analyse" -Content $queueHTML
+    New-HTMLSection -Title "Message Queue Analyse" -Category "Exchange Basis" -Content $queueHTML
 }
 
 # ---------------------------------------------------------------
@@ -5363,7 +5477,7 @@ function Get-CalendarResourceConfigInfo {
         $calHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Calendar & Resource Mailbox Konfiguration" -Content $calHTML
+    New-HTMLSection -Title "Calendar & Resource Mailbox Konfiguration" -Category "Empfänger" -Content $calHTML
 }
 
 # ---------------------------------------------------------------
@@ -5414,11 +5528,13 @@ function Get-ArchiveConfigurationInfo {
         # Archiv-Datenbanken
         try {
             $archiveDatabases = Get-MailboxDatabase -ErrorAction SilentlyContinue |
+                Where-Object { $_.Server -in $ExchangeServers } |
                 Where-Object { $_.IsExcludedFromProvisioning -eq $false -and $_.Name -like "*Archive*" }
 
             if (-not $archiveDatabases) {
                 # Fallback: Alle DBs, die als Archiv markiert sind
                 $archiveDatabases = Get-MailboxDatabase -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Server -in $ExchangeServers } |
                     Where-Object { $_.IsArchive }
             }
 
@@ -5459,7 +5575,7 @@ function Get-ArchiveConfigurationInfo {
         $archiveHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Exchange Archive Konfiguration" -Content $archiveHTML
+    New-HTMLSection -Title "Exchange Archive Konfiguration" -Category "Empfänger" -Content $archiveHTML
 }
 
 # ---------------------------------------------------------------
@@ -5495,7 +5611,7 @@ function Get-MessageSizeLimitsInfo {
 
         # Connector-Level (Send Connectors)
         try {
-            $sendConnectors = Get-SendConnector -ErrorAction SilentlyContinue
+            $sendConnectors = Get-SendConnector -ErrorAction SilentlyContinue | Where-Object { @($_.SourceTransportServers | Where-Object { $_ -in $ExchangeServers }).Count -gt 0 }
             if ($sendConnectors) {
                 $scLimits = foreach ($sc in $sendConnectors) {
                     [PSCustomObject]@{
@@ -5514,7 +5630,7 @@ function Get-MessageSizeLimitsInfo {
 
         # Connector-Level (Receive Connectors)
         try {
-            $recvConnectors = Get-ReceiveConnector -ErrorAction SilentlyContinue
+            $recvConnectors = Get-ReceiveConnector -ErrorAction SilentlyContinue | Where-Object { $_.Server -in $ExchangeServers }
             if ($recvConnectors) {
                 $rcLimits = foreach ($rc in $recvConnectors) {
                     [PSCustomObject]@{
@@ -5587,7 +5703,7 @@ function Get-MessageSizeLimitsInfo {
         $limitsHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Exchange Message Size Limits" -Content $limitsHTML
+    New-HTMLSection -Title "Exchange Message Size Limits" -Category "Mail-Flow" -Content $limitsHTML
 }
 
 # ---------------------------------------------------------------
@@ -5631,7 +5747,7 @@ function Get-PartnerApplicationsInfo {
         $paHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Exchange Partner Applications" -Content $paHTML
+    New-HTMLSection -Title "Exchange Partner Applications" -Category "Sicherheit" -Content $paHTML
 }
 
 # ---------------------------------------------------------------
@@ -5732,7 +5848,7 @@ function Get-FederatedSharingInfo {
     $fedHTML += "<li>Kalender-Freigabe mit anderen Exchange-Organisationen</li>"
     $fedHTML += "</ul>"
 
-    New-HTMLSection -Title "Exchange Federated Sharing" -Content $fedHTML
+    New-HTMLSection -Title "Exchange Federated Sharing" -Category "Hybrid / Cloud" -Content $fedHTML
 }
 
 # ---------------------------------------------------------------
@@ -5861,6 +5977,7 @@ function Get-OAuthCertificateAuthInfo {
     try {
         $cbaEnabled = $false
         $owaCba = Get-OwaVirtualDirectory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Server -in $ExchangeServers } |
             Where-Object { $_.ClientAuthCleanupLevel -ne $null -or $_.IISAuthenticationMethods -match "Certificate" }
         if ($owaCba) {
             $cbaData = foreach ($owa in $owaCba) {
@@ -5905,7 +6022,7 @@ function Get-OAuthCertificateAuthInfo {
     $oauthHTML += "<tr class='odd'><td>Intra-Org Connector</td><td>Für OAuth-Kommunikation zwischen Exchange und SharePoint/Skype</td></tr>"
     $oauthHTML += "</tbody></table>"
 
-    New-HTMLSection -Title "OAuth / Certificate Based Auth" -Content $oauthHTML
+    New-HTMLSection -Title "OAuth / Certificate Based Auth" -Category "Sicherheit" -Content $oauthHTML
 }
 
 #endregion
@@ -5963,7 +6080,7 @@ function Get-WindowsFeaturesInfo {
             $featHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
         }
     }
-    New-HTMLSection -Title "Windows Features & Rollen" -Content $featHTML
+    New-HTMLSection -Title "Windows Features & Rollen" -Category "Hardware & OS" -Content $featHTML
 }
 
 # ---------------------------------------------------------------
@@ -6067,7 +6184,7 @@ function Get-DotNetFrameworkInfo {
             $dotnetHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
         }
     }
-    New-HTMLSection -Title ".NET Framework Version & DLLs" -Content $dotnetHTML
+    New-HTMLSection -Title ".NET Framework Version & DLLs" -Category "Hardware & OS" -Content $dotnetHTML
 }
 
 # ---------------------------------------------------------------
@@ -6162,7 +6279,7 @@ function Get-PendingRebootInfo {
             $rebootHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
         }
     }
-    New-HTMLSection -Title "Ausstehende Neustarts (Pending Reboot)" -Content $rebootHTML
+    New-HTMLSection -Title "Ausstehende Neustarts (Pending Reboot)" -Category "Hardware & OS" -Content $rebootHTML
 }
 
 # ---------------------------------------------------------------
@@ -6235,7 +6352,7 @@ function Get-CpuThrottlingInfo {
             $cpuHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
         }
     }
-    New-HTMLSection -Title "CPU Throttling Analyse" -Content $cpuHTML
+    New-HTMLSection -Title "CPU Throttling Analyse" -Category "Hardware & OS" -Content $cpuHTML
 }
 
 # ---------------------------------------------------------------
@@ -6272,28 +6389,47 @@ function Get-VCRedistInfo {
                     )
                     $vcItems = @()
                     foreach ($key in $vcKeys) {
-                        # Read subkeys via remote registry
-                        $subKeys = Get-RemoteRegistryValue -ComputerName $server -RegistryPath $key -ValueName "" -ErrorAction SilentlyContinue
-                        # Try via CIM StdRegProv
+                        # Methode 1: .NET Remote Registry
                         try {
-                            $regProv = Get-CimInstance -CimSession $session -ClassName StdRegProv -Namespace root/default -ErrorAction SilentlyContinue
-                            if ($regProv) {
-                                $enumResult = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName EnumKey -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $key } -ErrorAction SilentlyContinue
-                                if ($enumResult -and $enumResult.sNames) {
-                                    foreach ($subKey in $enumResult.sNames) {
-                                        $displayName = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName GetStringValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = "$key\$subKey"; sValueName = "DisplayName" } -ErrorAction SilentlyContinue
-                                        $displayVersion = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName GetStringValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = "$key\$subKey"; sValueName = "DisplayVersion" } -ErrorAction SilentlyContinue
-                                        if ($displayName.sValue -and $displayName.sValue -match "Visual C\+\+") {
-                                            $vcItems += [PSCustomObject]@{
-                                                "Name"    = $displayName.sValue
-                                                "Version" = if ($displayVersion.sValue) { $displayVersion.sValue } else { "-" }
-                                                "Arch"    = if ($key -match "WOW6432Node") { "32-bit" } else { "64-bit" }
+                            $subKeyNames = Get-RemoteRegistrySubKeyNames -ComputerName $server -RegistryPath $key
+                            foreach ($subKey in $subKeyNames) {
+                                $subKeyPath = "$key\$subKey"
+                                $displayName = Get-RemoteRegistryValue -ComputerName $server -RegistryPath $subKeyPath -ValueName "DisplayName"
+                                if ($displayName -and $displayName -match "Visual C\+\+") {
+                                    $displayVersion = Get-RemoteRegistryValue -ComputerName $server -RegistryPath $subKeyPath -ValueName "DisplayVersion"
+                                    $vcItems += [PSCustomObject]@{
+                                        "Name"    = $displayName
+                                        "Version" = if ($displayVersion) { $displayVersion } else { "-" }
+                                        "Arch"    = if ($key -match "WOW6432Node") { "32-bit" } else { "64-bit" }
+                                    }
+                                }
+                            }
+                        } catch {
+                            Write-Log -Message "VC++ Registry (NET) für $server fehlgeschlagen: $_" -Level "WARNING"
+                        }
+
+                        # Methode 2: CIM StdRegProv (Fallback)
+                        if ($vcItems.Count -eq 0) {
+                            try {
+                                $regProv = Get-CimInstance -CimSession $session -ClassName StdRegProv -Namespace root/default -ErrorAction SilentlyContinue
+                                if ($regProv) {
+                                    $enumResult = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName EnumKey -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = $key } -ErrorAction SilentlyContinue
+                                    if ($enumResult -and $enumResult.sNames) {
+                                        foreach ($subKey in $enumResult.sNames) {
+                                            $displayName = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName GetStringValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = "$key\$subKey"; sValueName = "DisplayName" } -ErrorAction SilentlyContinue
+                                            $displayVersion = Invoke-CimMethod -CimSession $session -ClassName StdRegProv -MethodName GetStringValue -Arguments @{ hDefKey = [uint32]2147483650; sSubKeyName = "$key\$subKey"; sValueName = "DisplayVersion" } -ErrorAction SilentlyContinue
+                                            if ($displayName.sValue -and $displayName.sValue -match "Visual C\+\+") {
+                                                $vcItems += [PSCustomObject]@{
+                                                    "Name"    = $displayName.sValue
+                                                    "Version" = if ($displayVersion.sValue) { $displayVersion.sValue } else { "-" }
+                                                    "Arch"    = if ($key -match "WOW6432Node") { "32-bit" } else { "64-bit" }
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
-                        } catch { }
+                            } catch { }
+                        }
                     }
 
                     if ($vcItems.Count -gt 0) {
@@ -6320,7 +6456,7 @@ function Get-VCRedistInfo {
             $vcHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
         }
     }
-    New-HTMLSection -Title "Visual C++ Redistributable Versionen" -Content $vcHTML
+    New-HTMLSection -Title "Visual C++ Redistributable Versionen" -Category "Hardware & OS" -Content $vcHTML
 }
 
 # ---------------------------------------------------------------
@@ -6390,7 +6526,7 @@ function Get-CredentialGuardInfo {
             $cgHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
         }
     }
-    New-HTMLSection -Title "Credential Guard Status" -Content $cgHTML
+    New-HTMLSection -Title "Credential Guard Status" -Category "Sicherheit" -Content $cgHTML
 }
 
 # ---------------------------------------------------------------
@@ -6414,29 +6550,81 @@ function Get-LocalAdminInfo {
                 $session = New-ServerCimSession -ComputerName $server
                 if (-not $session) { throw "Keine CIM-Session verfügbar." }
 
-                # CIM: Win32_Group - Administratoren abrufen
+                # CIM: Win32_Group - Administratoren abrufen (englisch + deutsch)
                 $adminGroup = Get-CimInstance -CimSession $session -ClassName Win32_Group -Filter "Name = 'Administrators' AND Domain = '$server'" -ErrorAction SilentlyContinue
                 if (-not $adminGroup) {
                     $adminGroup = Get-CimInstance -CimSession $session -ClassName Win32_Group -Filter "Name = 'Administrators'" -ErrorAction SilentlyContinue
                 }
+                if (-not $adminGroup) {
+                    $adminGroup = Get-CimInstance -CimSession $session -ClassName Win32_Group -Filter "Name = 'Administratoren' AND Domain = '$server'" -ErrorAction SilentlyContinue
+                }
+                if (-not $adminGroup) {
+                    $adminGroup = Get-CimInstance -CimSession $session -ClassName Win32_Group -Filter "Name = 'Administratoren'" -ErrorAction SilentlyContinue
+                }
+                if (-not $adminGroup) {
+                    # Fallback: per Invoke-Command die Gruppe ermitteln
+                    try {
+                        Write-Log -Message "Win32_Group fehlgeschlagen, versuche net localgroup per Invoke-Command..." -Level "INFO"
+                        $adminGroupName = Invoke-Command -ComputerName $server -ScriptBlock {
+                            $g = net localgroup 2>$null | Where-Object { $_ -match '^(Administrators|Administratoren)$' }
+                            if (-not $g) { $g = (Get-LocalGroup | Where-Object { $_.SID -like 'S-1-5-32-544' }).Name }
+                            return $g
+                        } -ErrorAction SilentlyContinue
+                        if ($adminGroupName) {
+                            $adminGroup = [PSCustomObject]@{ Name = $adminGroupName; Domain = $server }
+                        }
+                    }
+                    catch {
+                        Write-Log -Message "Invoke-Command Fallback für Admin-Gruppe fehlgeschlagen: $_" -Level "WARNING"
+                    }
+                }
 
                 if ($adminGroup) {
-                    $members = Get-CimInstance -CimSession $session -ClassName Win32_GroupUser -ErrorAction SilentlyContinue |
-                        Where-Object { $_.GroupComponent -match "Administrators" }
+                    # Mitglieder effizient über CIM-Association abrufen
+                    $members = Get-CimAssociatedInstance -CimSession $session -InputObject $adminGroup -ResultClassName Win32_UserAccount -ErrorAction SilentlyContinue
+                    $memberGroups = Get-CimAssociatedInstance -CimSession $session -InputObject $adminGroup -ResultClassName Win32_Group -ErrorAction SilentlyContinue
 
-                    $memberData = if ($members) {
-                        $memberList = foreach ($member in $members) {
-                            $part = $member.PartComponent -replace '.*Name="([^"]+)".*', '$1'
-                            $domain = $member.PartComponent -replace '.*Domain="([^"]+)".*', '$1'
-                            [PSCustomObject]@{
-                                "Mitglied" = "$domain\$part"
-                                "Typ"      = if ($member.PartComponent -match "Win32_UserAccount") { "Benutzer" } else { "Gruppe" }
+                    $memberData = @()
+                    if ($members -or $memberGroups) {
+                        foreach ($member in $members) {
+                            $memberData += [PSCustomObject]@{
+                                "Mitglied" = "$($member.Domain)\$($member.Name)"
+                                "Typ"      = "Benutzer"
                             }
                         }
-                        $memberList | Sort-Object Mitglied
-                    } else {
-                        @()
+                        foreach ($member in $memberGroups) {
+                            if ($member.Name -ne $adminGroup.Name) {
+                                $memberData += [PSCustomObject]@{
+                                    "Mitglied" = "$($member.Domain)\$($member.Name)"
+                                    "Typ"      = "Gruppe"
+                                }
+                            }
+                        }
                     }
+                    else {
+                        # Fallback: net localgroup via Invoke-Command
+                        try {
+                            Write-Log -Message "CIM-Association lieferte keine Mitglieder, versuche Invoke-Command..." -Level "INFO"
+                            $netResult = Invoke-Command -ComputerName $server -ScriptBlock {
+                                param($groupName)
+                                $output = net localgroup $groupName 2>$null | Select-Object -Skip 6
+                                $output = $output | Select-Object -Take ($output.Count - 2)
+                                return $output
+                            } -ArgumentList $adminGroup.Name -ErrorAction SilentlyContinue
+                            if ($netResult) {
+                                foreach ($entry in $netResult) {
+                                    $memberData += [PSCustomObject]@{
+                                        "Mitglied" = $entry.Trim()
+                                        "Typ"      = "Benutzer/Gruppe"
+                                    }
+                                }
+                            }
+                        }
+                        catch {
+                            Write-Log -Message "Invoke-Command Fallback fehlgeschlagen: $_" -Level "WARNING"
+                        }
+                    }
+                    $memberData = $memberData | Sort-Object Mitglied
 
                     $serverHTML += "<h4>Mitglieder der lokalen Administratoren-Gruppe</h4>"
                     if ($memberData.Count -gt 0) {
@@ -6484,7 +6672,7 @@ function Get-LocalAdminInfo {
             $adminHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
         }
     }
-    New-HTMLSection -Title "Lokale Administratoren" -Content $adminHTML
+    New-HTMLSection -Title "Lokale Administratoren" -Category "Sicherheit" -Content $adminHTML
 }
 
 # ---------------------------------------------------------------
@@ -6572,7 +6760,7 @@ function Get-DomainTrustInfo {
         $trustHTML += "<p class='error'>Fehler: $_</p>"
     }
 
-    New-HTMLSection -Title "Domain Trusts & Verschlüsselung" -Content $trustHTML
+    New-HTMLSection -Title "Domain Trusts & Verschlüsselung" -Category "Active Directory" -Content $trustHTML
 }
 
 # ---------------------------------------------------------------
@@ -6603,53 +6791,247 @@ function Get-FIPFSInfo {
                 }
 
                 if ($exchInstallPath) {
-                    $fipfsPath = Join-Path -Path $exchInstallPath -ChildPath "TransportRoles\Data\AntiSpam\Engine"
-                    $scanEnginePath = Join-Path -Path $fipfsPath -ChildPath "ScanEngine.ini"
-                    $updatePath = Join-Path -Path $fipfsPath -ChildPath "Update"
+                    # FIP-FS Engine via Invoke-Command auslesen (lokal + remote)
+                    $engineData = if ($isLocal) {
+                        $localScript = {
+                            param($installPath)
+                            
+                            # Stufe 1: Rekursive Suche nach ScanEngine.ini mit relevanten Pfaden
+                            $scanEnginePath = Get-ChildItem -Path $installPath -Filter "ScanEngine.ini" -Recurse -ErrorAction SilentlyContinue | 
+                                Where-Object { $_.FullName -match "FIP|Engine|AntiSpam" } | 
+                                Select-Object -First 1
+                            
+                            if ($scanEnginePath) {
+                                $fipfsPath = Split-Path -Parent $scanEnginePath.FullName
+                                $iniContent = Get-Content $scanEnginePath.FullName -ErrorAction SilentlyContinue
+                                $engineVersion = ($iniContent | Select-String -Pattern "^EngineVersion=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                                $engineName = ($iniContent | Select-String -Pattern "^EngineName=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                                $patternVersion = ($iniContent | Select-String -Pattern "^PatternVersion=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                                
+                                return @{
+                                    Path = $fipfsPath
+                                    EngineVersion = "$engineVersion"
+                                    EngineName = "$engineName"
+                                    PatternVersion = "$patternVersion"
+                                    LastWrite = $scanEnginePath.LastWriteTime
+                                    Method = "ScanEngine.ini gefunden"
+                                }
+                            }
+                            
+                            # Stufe 2: Suche nach .ini Dateien mit Engine-Info
+                            $iniFiles = Get-ChildItem -Path $installPath -Filter "*.ini" -Recurse -ErrorAction SilentlyContinue | 
+                                Where-Object { $_.FullName -match "FIP|Engine|AntiSpam" }
+                            
+                            foreach ($ini in $iniFiles) {
+                                $content = Get-Content $ini.FullName -ErrorAction SilentlyContinue -Raw
+                                if ($content -match "EngineVersion|EngineName") {
+                                    $fipfsPath = Split-Path -Parent $ini.FullName
+                                    $engineVersion = ($content | Select-String -Pattern "^EngineVersion=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                                    $engineName = ($content | Select-String -Pattern "^EngineName=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                                    $patternVersion = ($content | Select-String -Pattern "^PatternVersion=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                                    
+                                    if ($engineVersion) {
+                                        return @{
+                                            Path = $fipfsPath
+                                            EngineVersion = "$engineVersion"
+                                            EngineName = "$engineName"
+                                            PatternVersion = "$patternVersion"
+                                            LastWrite = $ini.LastWriteTime
+                                            Method = "Config gefunden: $($ini.Name)"
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            # Stufe 3: Breitsuche im gesamten ProgramFiles
+                            $broadSearch = Get-ChildItem -Path "$env:ProgramFiles\Microsoft" -Filter "ScanEngine.ini" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                            if ($broadSearch) {
+                                $fipfsPath = Split-Path -Parent $broadSearch.FullName
+                                $iniContent = Get-Content $broadSearch.FullName -ErrorAction SilentlyContinue
+                                $engineVersion = ($iniContent | Select-String -Pattern "^EngineVersion=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                                
+                                return @{
+                                    Path = $fipfsPath
+                                    EngineVersion = "$engineVersion"
+                                    EngineName = "Exchange Anti-Malware"
+                                    Method = "Breitsuche im ProgramFiles"
+                                }
+                            }
+                            
+                            # Stufe 4: Registry-Fallback
+                            $regPath = "HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Transport\AntiMalware"
+                            if (Test-Path $regPath -ErrorAction SilentlyContinue) {
+                                $fipfsPath = @(
+                                    (Join-Path $installPath "FIP-FS"),
+                                    (Join-Path $installPath "FIP-FS\Engine"),
+                                    (Join-Path $installPath "TransportRoles\Data\AntiSpam"),
+                                    "$env:ProgramFiles\Microsoft\Exchange Server\V15\FIP-FS"
+                                ) | Where-Object { Test-Path $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
+                                
+                                if ($fipfsPath) {
+                                    return @{
+                                        Path = $fipfsPath
+                                        EngineVersion = "Registry-Eintrag"
+                                        EngineName = "Exchange Anti-Malware"
+                                        Method = "Registry-Info (ScanEngine.ini nicht zugänglich)"
+                                    }
+                                }
+                            }
+                            
+                            # Keine Lösung gefunden
+                            return @{ 
+                                Error = "FIP-FS / ScanEngine.ini nicht gefunden"
+                                SearchedIn = "$installPath"
+                            }
+                        }
+                        & $localScript $exchInstallPath
+                    }
+                    else {
+                        Invoke-Command -ComputerName $server -ScriptBlock {
+                            param($installPath)
+                            
+                            # Stufe 1: Rekursive Suche nach ScanEngine.ini mit relevanten Pfaden
+                            $scanEnginePath = Get-ChildItem -Path $installPath -Filter "ScanEngine.ini" -Recurse -ErrorAction SilentlyContinue | 
+                                Where-Object { $_.FullName -match "FIP|Engine|AntiSpam" } | 
+                                Select-Object -First 1
+                            
+                            if ($scanEnginePath) {
+                                $fipfsPath = Split-Path -Parent $scanEnginePath.FullName
+                                $iniContent = Get-Content $scanEnginePath.FullName -ErrorAction SilentlyContinue
+                                $engineVersion = ($iniContent | Select-String -Pattern "^EngineVersion=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                                $engineName = ($iniContent | Select-String -Pattern "^EngineName=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                                $patternVersion = ($iniContent | Select-String -Pattern "^PatternVersion=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                                
+                                return @{
+                                    Path = $fipfsPath
+                                    EngineVersion = "$engineVersion"
+                                    EngineName = "$engineName"
+                                    PatternVersion = "$patternVersion"
+                                    LastWrite = $scanEnginePath.LastWriteTime
+                                    Method = "ScanEngine.ini gefunden"
+                                }
+                            }
+                            
+                            # Stufe 2: Suche nach .ini Dateien mit Engine-Info
+                            $iniFiles = Get-ChildItem -Path $installPath -Filter "*.ini" -Recurse -ErrorAction SilentlyContinue | 
+                                Where-Object { $_.FullName -match "FIP|Engine|AntiSpam" }
+                            
+                            foreach ($ini in $iniFiles) {
+                                $content = Get-Content $ini.FullName -ErrorAction SilentlyContinue -Raw
+                                if ($content -match "EngineVersion|EngineName") {
+                                    $fipfsPath = Split-Path -Parent $ini.FullName
+                                    $engineVersion = ($content | Select-String -Pattern "^EngineVersion=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                                    $engineName = ($content | Select-String -Pattern "^EngineName=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                                    $patternVersion = ($content | Select-String -Pattern "^PatternVersion=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                                    
+                                    if ($engineVersion) {
+                                        return @{
+                                            Path = $fipfsPath
+                                            EngineVersion = "$engineVersion"
+                                            EngineName = "$engineName"
+                                            PatternVersion = "$patternVersion"
+                                            LastWrite = $ini.LastWriteTime
+                                            Method = "Config gefunden: $($ini.Name)"
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            # Stufe 3: Breitsuche im gesamten ProgramFiles
+                            $broadSearch = Get-ChildItem -Path "$env:ProgramFiles\Microsoft" -Filter "ScanEngine.ini" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                            if ($broadSearch) {
+                                $fipfsPath = Split-Path -Parent $broadSearch.FullName
+                                $iniContent = Get-Content $broadSearch.FullName -ErrorAction SilentlyContinue
+                                $engineVersion = ($iniContent | Select-String -Pattern "^EngineVersion=" -ErrorAction SilentlyContinue) -replace ".*=", ""
+                                
+                                return @{
+                                    Path = $fipfsPath
+                                    EngineVersion = "$engineVersion"
+                                    EngineName = "Exchange Anti-Malware"
+                                    Method = "Breitsuche im ProgramFiles"
+                                }
+                            }
+                            
+                            # Stufe 4: Registry-Fallback
+                            $regPath = "HKLM:\SOFTWARE\Microsoft\ExchangeServer\v15\Transport\AntiMalware"
+                            if (Test-Path $regPath -ErrorAction SilentlyContinue) {
+                                $fipfsPath = @(
+                                    (Join-Path $installPath "FIP-FS"),
+                                    (Join-Path $installPath "FIP-FS\Engine"),
+                                    (Join-Path $installPath "TransportRoles\Data\AntiSpam"),
+                                    "$env:ProgramFiles\Microsoft\Exchange Server\V15\FIP-FS"
+                                ) | Where-Object { Test-Path $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
+                                
+                                if ($fipfsPath) {
+                                    return @{
+                                        Path = $fipfsPath
+                                        EngineVersion = "Registry-Eintrag"
+                                        EngineName = "Exchange Anti-Malware"
+                                        Method = "Registry-Info (ScanEngine.ini nicht zugänglich)"
+                                    }
+                                }
+                            }
+                            
+                            # Keine Lösung gefunden
+                            return @{ 
+                                Error = "FIP-FS / ScanEngine.ini nicht gefunden"
+                                SearchedIn = "$installPath"
+                            }
+                        } -ArgumentList $exchInstallPath -ErrorAction SilentlyContinue
+                    }
 
                     $serverHTML += "<h4>FIP-FS Scan Engine</h4>"
 
-                    # ScanEngine.ini auslesen
-                    if ($isLocal -and (Test-Path $scanEnginePath)) {
-                        try {
-                            $iniContent = Get-Content $scanEnginePath -ErrorAction SilentlyContinue
-                            $engineVersion = ($iniContent | Select-String -Pattern "^EngineVersion=" -ErrorAction SilentlyContinue) -replace ".*=", ""
-                            $engineName = ($iniContent | Select-String -Pattern "^EngineName=" -ErrorAction SilentlyContinue) -replace ".*=", ""
-                            $patternVersion = ($iniContent | Select-String -Pattern "^PatternVersion=" -ErrorAction SilentlyContinue) -replace ".*=", ""
-
-                            $engineData = [PSCustomObject]@{
-                                "Engine Name"          = if ($engineName) { $engineName } else { "-" }
-                                "Engine Version"       = if ($engineVersion) { $engineVersion } else { "-" }
-                                "Pattern Version"      = if ($patternVersion) { $patternVersion } else { "-" }
-                                "Engine Pfad"          = $fipfsPath
-                            }
-                            $serverHTML += (ConvertTo-HTMLTable -Data @($engineData))
-                            $serverHTML += "<p><em>Letztes Update-Datum: $(Get-Date $((Get-Item $scanEnginePath).LastWriteTime) -Format 'dd.MM.yyyy HH:mm')</em></p>"
-                        } catch {
-                            $serverHTML += "<p class='no-data'>ScanEngine.ini konnte nicht gelesen werden: $_</p>"
+                    if ($engineData -and $engineData.EngineVersion -and -not $engineData.Error) {
+                        $engineTable = [PSCustomObject]@{
+                            "Engine Name"          = if ($engineData.EngineName) { $engineData.EngineName } else { "-" }
+                            "Engine Version"       = $engineData.EngineVersion
+                            "Pattern Version"      = if ($engineData.PatternVersion) { $engineData.PatternVersion } else { "-" }
+                            "Engine Pfad"          = $engineData.Path
+                            "Erkennungsmethode"    = if ($engineData.Method) { $engineData.Method } else { "-" }
                         }
-                    } elseif (-not $isLocal) {
-                        $serverHTML += "<p class='no-data'>FIP-FS Scan Engine Details nur lokal oder via UNC-Pfad verfügbar.</p>"
-                    } else {
-                        $serverHTML += "<p class='no-data'>FIP-FS Scan Engine nicht gefunden unter: $fipfsPath</p>"
+                        $serverHTML += (ConvertTo-HTMLTable -Data @($engineTable))
+                        if ($engineData.LastWrite) {
+                            $serverHTML += "<p><em>Letztes Update-Datum: $(Get-Date $engineData.LastWrite -Format 'dd.MM.yyyy HH:mm')</em></p>"
+                        }
+                    }
+                    elseif ($engineData -and $engineData.Error) {
+                        $errorMsg = $engineData.Error
+                        if ($engineData.SearchedIn) {
+                            $errorMsg += " (durchsucht: $($engineData.SearchedIn))"
+                        }
+                        $serverHTML += "<p class='no-data'><strong>$errorMsg</strong></p>"
+                        $serverHTML += "<p class='info'>Mögliche Ursachen: FIP-FS nicht installiert, Anti-Malware deaktiviert, oder Berechtigungen unzureichend.</p>"
+                    }
+                    else {
+                        $serverHTML += "<p class='no-data'>FIP-FS Scan Engine nicht gefunden.</p>"
                     }
 
                     # Anti-Malware Status
                     $serverHTML += "<h4>Exchange Anti-Malware Status</h4>"
                     try {
                         if ($isLocal) {
-                            $malwareFilteringEnabled = (Get-TransportConfig -ErrorAction SilentlyContinue).AntispamAntimalwareEnabled
-                            $malwareFilteringEnabled = if ($null -ne $malwareFilteringEnabled) { $malwareFilteringEnabled } else { $true }
-                            $malwareStatus = [PSCustomObject]@{
-                                "Anti-Malware aktiv"   = if ($malwareFilteringEnabled) { "✅ Aktiviert" } else { "❌ Deaktiviert" }
-                                "FIP-FS Pfad"          = $fipfsPath
+                            # Wenn FIP-FS nicht gefunden wurde, dann auch nicht "aktiviert" anzeigen
+                            if ($engineData -and $engineData.Error) {
+                                $malwareStatus = [PSCustomObject]@{
+                                    "Anti-Malware Status"  = "⚠️ Nicht verfügbar"
+                                    "Grund"                = $engineData.Error
+                                }
+                            } else {
+                                $malwareFilteringEnabled = (Get-TransportConfig -ErrorAction SilentlyContinue).AntispamAntimalwareEnabled
+                                $malwareFilteringEnabled = if ($null -ne $malwareFilteringEnabled) { $malwareFilteringEnabled } else { $false }
+                                $fipfsEnginePath = if ($engineData -and $engineData.Path) { $engineData.Path } else { "-" }
+                                $malwareStatus = [PSCustomObject]@{
+                                    "Anti-Malware Status"  = if ($malwareFilteringEnabled) { "✅ Aktiviert" } else { "❌ Deaktiviert" }
+                                    "FIP-FS Pfad"          = $fipfsEnginePath
+                                }
                             }
                             $serverHTML += (ConvertTo-HTMLTable -Data @($malwareStatus))
                         } else {
                             $serverHTML += "<p class='no-data'>Anti-Malware Status nur lokal abrufbar.</p>"
                         }
                     } catch {
-                        $serverHTML += "<p class='no-data'>Anti-Malware Status nicht verfügbar.</p>"
+                        $serverHTML += "<p class='no-data'>Anti-Malware Status nicht verfügbar: $_</p>"
                     }
                 } else {
                     $serverHTML += "<p class='error'>Exchange Installationspfad nicht gefunden für Server $server.</p>"
@@ -6665,7 +7047,7 @@ function Get-FIPFSInfo {
             $fipfsHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
         }
     }
-    New-HTMLSection -Title "FIP-FS Scan Engine Version" -Content $fipfsHTML
+    New-HTMLSection -Title "FIP-FS Scan Engine Version" -Category "Sicherheit" -Content $fipfsHTML
 }
 
 # ---------------------------------------------------------------
@@ -6681,14 +7063,7 @@ function Get-SettingOverrideInfo {
     $overrideHTML = ""
 
     try {
-        $overrides = Get-SettingOverride -Server $ExchangeServers[0] -ErrorAction SilentlyContinue
-        if (-not $overrides) {
-            # Fallback: Alle Server durchprobieren
-            foreach ($server in $ExchangeServers) {
-                $overrides = Get-SettingOverride -Server $server -ErrorAction SilentlyContinue
-                if ($overrides) { break }
-            }
-        }
+        $overrides = Get-SettingOverride -ErrorAction SilentlyContinue
 
         if ($overrides) {
             $ovData = foreach ($ov in $overrides) {
@@ -6720,7 +7095,7 @@ function Get-SettingOverrideInfo {
         $overrideHTML += "<p class='no-data'>Setting Overrides konnten nicht abgerufen werden: $_</p>"
     }
 
-    New-HTMLSection -Title "Exchange Setting Overrides" -Content $overrideHTML
+    New-HTMLSection -Title "Exchange Setting Overrides" -Category "Exchange Basis" -Content $overrideHTML
 }
 
 # ---------------------------------------------------------------
@@ -6758,16 +7133,31 @@ function Get-ServerComponentStateInfo {
                     $serverHTML += (ConvertTo-HTMLTable -Data @($summaryData))
 
                     if ($inactiveComponents.Count -gt 0) {
+                        # Komponenten, die standardmäßig inaktiv sein können (keine Warnung)
+                        $defaultInactive = @(
+                            'ForwardSyncDaemon',
+                            'ProvisioningRps',
+                            'UMCallRouter',
+                            'Imap4',
+                            'Pop3',
+                            'Monitoring'
+                        )
+
                         $serverHTML += "<h4>Inaktive Komponenten</h4>"
                         $inactiveData = foreach ($ic in $inactiveComponents) {
+                            $isNormal = $ic.Component -in $defaultInactive
                             [PSCustomObject]@{
                                 "Komponente" = $ic.Component
-                                "Status"     = "🔴 Inaktiv"
+                                "Status"     = if ($isNormal) { "ℹ️ Normal (inaktiv)" } else { "🔴 Inaktiv" }
                                 "Remote"     = $ic.Remote
                             }
                         }
                         $serverHTML += (ConvertTo-HTMLTable -Data ($inactiveData | Sort-Object Komponente))
-                        $serverHTML += "<p class='error'>⚠️ $($inactiveComponents.Count) Komponente(n) sind inaktiv. Möglicherweise ist der Server im Wartungsmodus!</p>"
+
+                        $criticalInactive = $inactiveComponents | Where-Object { $_.Component -notin $defaultInactive }
+                        if ($criticalInactive) {
+                            $serverHTML += "<p class='error'>⚠️ $($criticalInactive.Count) kritische Komponente(n) sind inaktiv – möglicherweise ist der Server im Wartungsmodus!</p>"
+                        }
                     }
 
                     if ($activeComponents.Count -gt 0) {
@@ -6795,117 +7185,90 @@ function Get-ServerComponentStateInfo {
             $compHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
         }
     }
-    New-HTMLSection -Title "Exchange Server Component States" -Content $compHTML
+    New-HTMLSection -Title "Exchange Server Component States" -Category "Exchange Basis" -Content $compHTML
 }
 
 # ---------------------------------------------------------------
-# 54. SECURITY CVEs (CVE-2021-34470, CVE-2022-21978)
+# 54. SECURITY CVE PRÜFUNG (via BSI RSS-Feed)
 # ---------------------------------------------------------------
 function Get-SecurityCVEInfo {
     <#
     .SYNOPSIS
-        Prüft auf bekannte Sicherheitslücken (CVEs) in der Exchange-Konfiguration.
+        Ruft aktuelle Exchange-Sicherheitslücken aus dem BSI RSS-Feed ab.
     #>
-    Write-Log -Message "=== Prüfe Security CVEs ===" -Level "INFO"
+    Write-Log -Message "=== Prüfe aktuelle Security CVEs (BSI RSS-Feed) ===" -Level "INFO"
 
     $cveHTML = ""
 
-    foreach ($server in $ExchangeServers) {
-        try {
-            Write-Log -Message "CVE-Check für Server: $server" -Level "INFO"
-            $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
-
-            try {
-                $session = New-ServerCimSession -ComputerName $server
-                if (-not $session) { throw "Keine CIM-Session verfügbar." }
-
-                # --- CVE-2021-34470: Exchange-ACL-Permission (AD ACL) ---
-                $cve34470 = [PSCustomObject]@{
-                    "CVE"                     = "CVE-2021-34470"
-                    "Beschreibung"            = "Exchange-ACL-Schwachstelle - Privilegienausweitung"
-                    "Betroffene Versionen"    = "Exchange 2013, 2016, 2019"
-                    "Fix verfügbar seit"      = "2021-06-01 (April 2021 SU)"
-                    "Remediation"             = "Set-OrganizationConfig -ACLableSubscriptionEnabled $false"
-                }
-
-                # --- CVE-2022-21978: Exchange-Authentifizierungsumgehung ---
-                $cve21978 = [PSCustomObject]@{
-                    "CVE"                     = "CVE-2022-21978"
-                    "Beschreibung"            = "Exchange Server Authentifizierungsumgehung via OWA"
-                    "Betroffene Versionen"    = "Exchange 2013, 2016, 2019"
-                    "Fix verfügbar seit"      = "2022-01-11 (January 2022 SU)"
-                    "Remediation"             = "Installation des Januar 2022 Sicherheitsupdates"
-                }
-
-                # Prüfe Exchange Build-Nummer gegen bekannte Fix-Versionen
-                $exchangeBuild = Get-RemoteRegistryValue -ComputerName $server -RegistryPath "SOFTWARE\Microsoft\ExchangeServer\v15\Setup" -ValueName "MsiProductMajor"
-                $exchangeBuildMinor = Get-RemoteRegistryValue -ComputerName $server -RegistryPath "SOFTWARE\Microsoft\ExchangeServer\v15\Setup" -ValueName "MsiProductMinor"
-
-                $supTable = @($cve34470, $cve21978)
-
-                $serverHTML += "<h4>Security CVE Übersicht</h4>"
-                $serverHTML += (ConvertTo-HTMLTable -Data $supTable)
-
-                # Exchange-Version prüfen
-                $serverHTML += "<h4>Exchange Update Level Prüfung</h4>"
-                try {
-                    $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
-                    if ($isLocal) {
-                        $updateInfo = Get-ExchangeServerUpdateInfo -ErrorAction SilentlyContinue
-                        if ($updateInfo) {
-                            $serverHTML += "<p>$updateInfo</p>"
-                        } else {
-                            $serverHTML += "<p>Exchange Build: $exchangeBuild.$exchangeBuildMinor</p>"
-                        }
-                    } else {
-                        $serverHTML += "<p>Exchange Build: $exchangeBuild.$exchangeBuildMinor</p>"
-                    }
-                } catch {
-                    $serverHTML += "<p>Exchange Build: $exchangeBuild.$exchangeBuildMinor</p>"
-                }
-
-                $serverHTML += "<h4>Empfehlungen</h4>"
-                $serverHTML += "<p>Führen Sie regelmäßige Security-Updates durch und prüfen Sie die aktuelle Exchange-Build-Nummer gegen die neueste verfügbare Version.</p>"
-                $serverHTML += "<p>Aktuelle Exchange Security News: <a href='https://msrc.microsoft.com/update-guide' target='_blank'>Microsoft Security Response Center</a></p>"
-
-                if ($session) { Remove-CimSession -CimSession $session -ErrorAction SilentlyContinue }
-            } catch {
-                Write-Log -Message "CVE-Check für $server fehlgeschlagen: $_" -Level "WARNING"
-                $serverHTML += "<p class='error'>CVE-Prüfung konnte nicht durchgeführt werden: $_</p>"
-            }
-
-            $cveHTML += $serverHTML
-        } catch {
-            Write-Log -Message "Fehler bei CVE-Check für ${server}: $_" -Level "ERROR"
-            $cveHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
-        }
-    }
-
-    # AD-spezifische CVE-Prüfung (CVE-2021-34470 betrifft AD ACL)
     try {
-        $cveHTML += "<h3>Active Directory Security Prüfung</h3>"
-        $adModule = Get-Module -ListAvailable -Name ActiveDirectory -ErrorAction SilentlyContinue
-        if ($adModule) {
-            try {
-                Import-Module ActiveDirectory -ErrorAction SilentlyContinue
-                $adRoot = Get-ADRootDSE -ErrorAction SilentlyContinue
-                if ($adRoot) {
-                    $adSchema = $adRoot.schemaNamingContext
-                    $cveHTML += "<p><strong>AD Schema:</strong> $adSchema</p>"
-                    $cveHTML += "<p><em>Hinweis: CVE-2021-34470 betrifft die Exchange-ACL-Konfiguration. Prüfen Sie mit:</em></p>"
-                    $cveHTML += "<code>Get-OrganizationConfig | fl ACLableSubscriptionEnabled</code>"
-                }
-            } catch {
-                Write-Log -Message "AD-CVE Prüfung fehlgeschlagen: $_" -Level "WARNING"
-            }
-        } else {
-            $cveHTML += "<p class='no-data'>AD-Modul nicht verfügbar für erweiterte CVE-Prüfung.</p>"
+        $rssUrl = "https://wid.cert-bund.de/content/public/securityAdvisory/rss"
+        Write-Log -Message "Rufe BSI RSS-Feed ab: $rssUrl" -Level "INFO"
+
+        # Abrufen mit Invoke-WebRequest für korrektes XML-Parsing
+        $webResponse = Invoke-WebRequest -Uri $rssUrl -ErrorAction SilentlyContinue
+        if (-not $webResponse) { throw "RSS-Feed nicht erreichbar." }
+
+        # RSS-Feed als XML parsen
+        [xml]$xmlDoc = $webResponse.Content
+        $entries = $xmlDoc.rss.channel.item
+        
+        if (-not $entries) { throw "RSS-Format nicht erkannt." }
+
+        Write-Log -Message "BSI RSS-Feed enthielt $($entries.Count) Einträge" -Level "INFO"
+
+        # Relevante Einträge für Exchange und Windows filtern
+        $relevantEntries = $entries | Where-Object {
+            "$($_.title) $($_.description)" -match "Microsoft|Exchange"
         }
-    } catch {
-        Write-Log -Message "AD-CVE Prüfung fehlgeschlagen: $_" -Level "WARNING"
+
+        if ($relevantEntries) {
+            $cveData = foreach ($entry in $relevantEntries) {
+                $title       = $entry.title
+                $description = $entry.description
+                $link        = $entry.link
+                $pubDate     = $entry.pubDate
+
+                # Datum formatieren
+                try { $pubDate = (Get-Date $pubDate -Format "dd.MM.yyyy") } catch {}
+
+                # Kurzbeschreibung (max 200 Zeichen, HTML-Tags entfernen)
+                $shortSummary = if ($description) {
+                    $clean = $description -replace '<[^>]+>', ''
+                    if ($clean.Length -gt 200) { $clean.Substring(0, 200) + "..." } else { $clean }
+                } else { "-" }
+
+                # Komponenten-Art erkennen
+                $component = "Sonstige"
+                if ($title -match "Exchange") { $component = "Exchange" }
+                elseif ($title -match "Windows") { $component = "Windows" }
+                else { $component = "Microsoft" }
+
+                [PSCustomObject]@{
+                    "Komponente"   = $component
+                    "Titel"        = $title
+                    "Datum"        = $pubDate
+                    "Beschreibung" = $shortSummary
+                    "Link"         = "<a href='$link' target='_blank'>mehr</a>"
+                }
+            }
+
+            $cveHTML += "<h3>Aktuelle Sicherheitsmeldungen (BSI)</h3>"
+            $cveHTML += "<p><strong>$($cveData.Count) relevante Einträge gefunden</strong> für Microsoft-Produkte (Exchange, Windows, etc.).</p>"
+            $cveHTML += (ConvertTo-HTMLTable -Data ($cveData | Sort-Object Datum -Descending))
+            $cveHTML += "<p><em>Quelle: <a href='$rssUrl' target='_blank'>BSI CERT-Bund WID-Feed</a></em></p>"
+        }
+        else {
+            $cveHTML += "<p class='no-data'>Keine aktuellen Sicherheitsmeldungen für Microsoft-Produkte im BSI RSS-Feed gefunden.</p>"
+            $cveHTML += "<p><em>Quelle: <a href='$rssUrl' target='_blank'>BSI CERT-Bund WID-Feed</a></em></p>"
+        }
+    }
+    catch {
+        Write-Log -Message "BSI RSS-Feed nicht erreichbar: $_" -Level "WARNING"
+        $cveHTML += "<p class='no-data'>BSI RSS-Feed aktuell nicht erreichbar.</p>"
+        $cveHTML += "<p>Alternativ:<ul><li><a href='https://msrc.microsoft.com/update-guide' target='_blank'>Microsoft Security Response Center</a> für Exchange & Windows CVEs</li><li><a href='https://wid.cert-bund.de/' target='_blank'>BSI CERT-Bund Portal</a></li></ul></p>"
     }
 
-    New-HTMLSection -Title "Security CVE Prüfung" -Content $cveHTML
+    New-HTMLSection -Title "Security CVE Prüfung" -Category "Sicherheit" -Content $cveHTML
 }
 
 # ---------------------------------------------------------------
@@ -7010,7 +7373,7 @@ function Get-HttpProxyInfo {
             $proxyHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
         }
     }
-    New-HTMLSection -Title "HTTP Proxy Konfiguration" -Content $proxyHTML
+    New-HTMLSection -Title "HTTP Proxy Konfiguration" -Category "Hardware & OS" -Content $proxyHTML
 }
 
 # ---------------------------------------------------------------
@@ -7158,7 +7521,7 @@ function Get-AntivirusProductInfo {
             $avHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
         }
     }
-    New-HTMLSection -Title "Installierte Antivirenlösung" -Content $avHTML
+    New-HTMLSection -Title "Installierte Antivirenlösung" -Category "Sicherheit" -Content $avHTML
 }
 
 function Get-NICReceiveBufferInfo {
@@ -7289,7 +7652,104 @@ function Get-NICReceiveBufferInfo {
             Write-Log -Message "Fehler bei NIC-Analyse für ${server}: $_" -Level "ERROR"
         }
     }
-    New-HTMLSection -Title "NIC Receive Buffer Analyse" -Content $nicHTML
+    New-HTMLSection -Title "NIC Receive Buffer Analyse" -Category "Hardware & OS" -Content $nicHTML
+}
+
+# ---------------------------------------------------------------
+# 57. AUTOMATIC DATABASE RESEED (AUTORESEED)
+# ---------------------------------------------------------------
+function Get-AutoReseedInfo {
+    <#
+    .SYNOPSIS
+        Prüft die AutoReseed-Konfiguration für DAG-Mitglieder (AutoDagVolumesRootFolderPath, 
+        AutoDagDatabasesRootFolderPath, Spare Volumes).
+    #>
+    Write-Log -Message "=== Prüfe AutoReseed-Konfiguration ===" -Level "INFO"
+
+    $arHTML = ""
+
+    try {
+        $dagServers = @()
+        try {
+            $dags = Get-DatabaseAvailabilityGroup -ErrorAction SilentlyContinue
+            if ($dags) {
+                $dagServers = $dags | ForEach-Object { $_.Servers } | Where-Object { $_ } | Sort-Object -Unique
+                Write-Log -Message "DAG-Mitglieder gefunden: $($dagServers.Count)" -Level "INFO"
+            }
+        } catch {
+            Write-Log -Message "Keine DAGs gefunden oder DAG nicht konfiguriert: $_" -Level "INFO"
+        }
+
+        if ($dagServers.Count -eq 0) {
+            $arHTML += "<p class='no-data'>Keine DAG-Mitglieder gefunden – AutoReseed ist nur in DAG-Umgebungen relevant.</p>"
+            New-HTMLSection -Title "Automatic Database Reseed (AutoReseed)" -Category "Exchange Basis" -Content $arHTML
+            return
+        }
+
+        foreach ($server in $dagServers) {
+            try {
+                Write-Log -Message "AutoReseed-Prüfung für Server: $server" -Level "INFO"
+                $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
+                $hasAutoReseed = $false
+
+                try {
+                    $mbxServer = Get-MailboxServer $server -ErrorAction SilentlyContinue
+                    if (-not $mbxServer) { throw "Get-MailboxServer nicht möglich" }
+
+                    $autoDagVolumesRoot  = $mbxServer.AutoDagVolumesRootFolderPath
+                    $autoDagDatabasesRoot = $mbxServer.AutoDagDatabasesRootFolderPath
+
+                    if ($autoDagVolumesRoot -or $autoDagDatabasesRoot) {
+                        $hasAutoReseed = $true
+                        $arConfig = [PSCustomObject]@{
+                            "AutoDagVolumesRootFolderPath"    = if ($autoDagVolumesRoot) { $autoDagVolumesRoot } else { "- (nicht konfiguriert)" }
+                            "AutoDagDatabasesRootFolderPath"  = if ($autoDagDatabasesRoot) { $autoDagDatabasesRoot } else { "- (nicht konfiguriert)" }
+                        }
+                        $serverHTML += "<h4>AutoReseed-Pfade</h4>"
+                        $serverHTML += (ConvertTo-HTMLTable -Data @($arConfig))
+                    }
+
+                    # Spare Volumes ermitteln
+                    $spareDatabases = Get-MailboxDatabase -Server $server -ErrorAction SilentlyContinue | 
+                        Where-Object { $_.Recovery -eq $true -or $_.IsExcludedFromProvisioning -eq $true }
+
+                    if ($spareDatabases) {
+                        $hasAutoReseed = $true
+                        $spareData = foreach ($db in $spareDatabases) {
+                            [PSCustomObject]@{
+                                "Datenbankname"       = $db.Name
+                                "Recovery"            = if ($db.Recovery) { "✅ Ja" } else { "❌ Nein" }
+                                "Provisioning gesperrt" = if ($db.IsExcludedFromProvisioning) { "✅ Ja" } else { "❌ Nein" }
+                                "Datenbankdatei"      = if ($db.EdbFilePath) { $db.EdbFilePath.PathName } else { "-" }
+                                "Volumepfad"          = if ($db.DatabaseFolderPath) { $db.DatabaseFolderPath } else { "-" }
+                            }
+                        }
+                        $serverHTML += "<h4>Spare / Recovery-Datenbanken</h4>"
+                        $serverHTML += "<p><strong>$($spareData.Count) Datenbank(en)</strong> als Spare/Recovery markiert.</p>"
+                        $serverHTML += (ConvertTo-HTMLTable -Data ($spareData | Sort-Object Datenbankname))
+                    }
+
+                    if (-not $hasAutoReseed) {
+                        $serverHTML += "<p class='no-data'>AutoReseed ist auf diesem Server nicht konfiguriert (keine AutoDag-Pfade, keine Spare-Datenbanken).</p>"
+                    }
+
+                } catch {
+                    Write-Log -Message "AutoReseed für $server fehlgeschlagen: $_" -Level "WARNING"
+                    $serverHTML += "<p class='error'>AutoReseed-Informationen nicht abrufbar: $_</p>"
+                }
+
+                $arHTML += $serverHTML
+            } catch {
+                Write-Log -Message "Fehler bei AutoReseed für ${server}: $_" -Level "ERROR"
+                $arHTML += "<h3 class='server-break'>Server: $server</h3><p class='error'>Fehler: $_</p>"
+            }
+        }
+    } catch {
+        Write-Log -Message "Fehler bei AutoReseed: $_" -Level "ERROR"
+        $arHTML += "<p class='error'>Fehler bei AutoReseed-Prüfung: $_</p>"
+    }
+
+    New-HTMLSection -Title "Automatic Database Reseed (AutoReseed)" -Category "Exchange Basis" -Content $arHTML
 }
 
 #endregion
@@ -7367,14 +7827,30 @@ function Build-HTMLDocument {
             list-style-type: none;
             padding-left: 0;
         }
-        .toc li {
-            padding: 4px 0;
+        .toc ul ul {
+            padding-left: 0;
+            margin-top: 4px;
         }
-        .toc a {
+        .toc > ul > li {
+            font-weight: bold;
+            font-size: 10pt;
+            color: #333333;
+            display: block;
+            padding: 10px 18px;
+            margin: 8px 0 6px 0;
+            border: 1px solid #0078D4;
+            border-radius: 6px;
+            background-color: #E8F4FD;
+        }
+        .toc li li {
+            padding: 2px 0 2px 8px;
+            list-style-type: none;
+        }
+        .toc li li a {
             text-decoration: none;
             color: #0078D4;
         }
-        .toc a:hover {
+        .toc li li a:hover {
             text-decoration: underline;
         }
         table {
@@ -7451,11 +7927,19 @@ function Build-HTMLDocument {
     </style>
 "@
 
-    # Inhaltsverzeichnis
+    # Inhaltsverzeichnis (nach Category + Title sortiert)
+    $sortedTOC = $script:TOCEntries | Sort-Object { $_.Category }, { $_.Title }
     $tocHTML = "<div class='toc'>`n<h2>Inhaltsverzeichnis</h2>`n<ul>"
-    foreach ($entry in $script:TOCEntries) {
+    $lastCategory = ""
+    foreach ($entry in $sortedTOC) {
+        if ($entry.Category -and $entry.Category -ne $lastCategory) {
+            if ($lastCategory) { $tocHTML += "</ul></li>`n" }
+            $tocHTML += "<li>$($entry.Category)`n<ul>`n"
+            $lastCategory = $entry.Category
+        }
         $tocHTML += "<li><a href='#$($entry.Anchor)'>$($entry.Title)</a></li>`n"
     }
+    if ($lastCategory) { $tocHTML += "</ul></li>`n" }
     $tocHTML += "</ul></div>"
 
     # Zusammenfassung
@@ -7613,8 +8097,7 @@ function Get-DocSectionRegistry {
         [PSCustomObject]@{ Key = "HttpProxy";          Label = "HTTP Proxy Konfiguration";          Category = "Sicherheit";         Function = "Get-HttpProxyInfo" }
         [PSCustomObject]@{ Key = "AntivirusProduct";  Label = "Installierte Antivirenlösung";      Category = "Sicherheit";         Function = "Get-AntivirusProductInfo" }
         [PSCustomObject]@{ Key = "NICReceiveBuffer";   Label = "NIC Receive Buffer Analyse";        Category = "Hardware & OS";      Function = "Get-NICReceiveBufferInfo" }
-
-        # === NEU IN v1.6 ===
+        [PSCustomObject]@{ Key = "AutoReseed";         Label = "Automatic Database Reseed (AutoReseed)"; Category = "Exchange Basis"; Function = "Get-AutoReseedInfo" }
         [PSCustomObject]@{ Key = "MessageQueue";       Label = "Message Queue Analyse";             Category = "Mail-Flow";          Function = "Get-MessageQueueInfo" }
         [PSCustomObject]@{ Key = "MessageSizeLimits";  Label = "Message Size Limits";               Category = "Mail-Flow";          Function = "Get-MessageSizeLimitsInfo" }
         [PSCustomObject]@{ Key = "PartnerApps";        Label = "Partner Applications";              Category = "Exchange Basis";     Function = "Get-PartnerApplicationsInfo" }
@@ -7713,11 +8196,17 @@ function Build-MarkdownDocument {
     [void]$sb.AppendLine("- Fehler: $($script:ErrorCount) | Warnungen: $($script:WarningCount)")
     [void]$sb.AppendLine()
 
-    # Inhaltsverzeichnis
+    # Inhaltsverzeichnis (nach Category + Title sortiert)
     [void]$sb.AppendLine("## Inhaltsverzeichnis")
     [void]$sb.AppendLine()
-    foreach ($entry in $script:TOCEntries) {
-        [void]$sb.AppendLine("- $($entry.Title)")
+    $sortedTOC = $script:TOCEntries | Sort-Object { $_.Category }, { $_.Title }
+    $lastCategory = ""
+    foreach ($entry in $sortedTOC) {
+        if ($entry.Category -and $entry.Category -ne $lastCategory) {
+            [void]$sb.AppendLine("### $($entry.Category)")
+            $lastCategory = $entry.Category
+        }
+        [void]$sb.AppendLine("- **$($entry.Title)**")
     }
     [void]$sb.AppendLine()
 

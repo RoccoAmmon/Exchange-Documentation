@@ -2,6 +2,27 @@
 
 Alle signifikanten Änderungen am Projekt werden hier dokumentiert.
 
+## [1.8] - 2026-07-10
+- ✨ **Neue Funktion: AutoReseed-Konfiguration**
+  - Automatic Database Reseed (AutoReseed) Prüfung für DAG-Mitglieder
+  - AutoDagVolumesRootFolderPath und AutoDagDatabasesRootFolderPath
+  - Spare Volumes / Recovery-Datenbanken erkennen
+- 🔒 **Security CVE Prüfung auf BSI RSS-Feed umgestellt**
+  - Live-Abfrage von https://wid.cert-bund.de/content/public/securityAdvisory/rss
+  - Filter erweitert auf Exchange + Windows Server (Microsoft-Produkte)
+  - Korrektes XML-Parsing via Invoke-WebRequest + [xml] (RSS 2.0)
+- 🛠️ **FIP-FS Scan Engine – 4-stufige Fallback-Suche**
+  - Stufe 1: Rekursive Suche nach ScanEngine.ini
+  - Stufe 2: .ini-Dateien mit EngineVersion/EngineName
+  - Stufe 3: Breitsuche im ProgramFiles
+  - Stufe 4: Registry-Fallback
+- 🐛 **ConvertTo-HTMLTable: Link-Spalte korrigiert**
+  - Link-Spalte wird nicht mehr HTML-encoded (Links sind jetzt klickbar)
+- 🐛 **Anti-Malware Status Logik korrigiert**
+  - Zeigt nur aktiv, wenn FIP-FS Engine tatsächlich vorhanden
+- ♻️ **CVE-Filter auf Microsoft-Produkte erweitert**
+  - Findet jetzt alle relevanten Microsoft-Sicherheitsmeldungen
+
 ## [1.7] - 2026-07-10
 - ✨ **15 neue System- & Sicherheitschecks hinzugefügt**
   - Windows Features & Rollen (installierte Server Rollen per CIM/DISM)
