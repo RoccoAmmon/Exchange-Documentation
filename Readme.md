@@ -3,7 +3,7 @@
 > **Automatische Erfassung und Dokumentation von Microsoft Exchange On-Premises Umgebungen (Exchange 2013, 2016, 2019 & Subscription Edition)**
 
 [![Status](https://img.shields.io/badge/Status-Release-brightgreen?style=flat-square)](./CHANGELOG.md)
-[![Version](https://img.shields.io/badge/Version-1.7-blue?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-1.8-blue?style=flat-square)](./CHANGELOG.md)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-blue?style=flat-square)](https://www.microsoft.com/en-us/download/details.aspx?id=50395)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
 [![GitHub Issues](https://img.shields.io/github/issues/RoccoAmmon/Exchange-Documentation?style=flat-square)](https://github.com/RoccoAmmon/Exchange-Documentation/issues)
@@ -70,7 +70,12 @@ Das Tool unterstützt **Exchange Server 2013, 2016, 2019** sowie **Exchange Serv
 - Remote Registry Access (ohne WinRM-Abhängigkeit)
 - Automatischer CIM → DCOM Fallback
 - Mail-Tips & MailTips-Konfiguration
-- Journal Rules und Message Tracking
+- Journal Rules und Message Tracking### 📦 Neue Funktionen & Fixes (v1.8)
+- **AutoReseed-Konfiguration** – AutoDagVolumesRootFolderPath, AutoDagDatabasesRootFolderPath, Spare Volumes
+- **Security CVE Prüfung** – Live-BSI RSS-Feed für Exchange & Windows
+- **FIP-FS Scan Engine** – 4-stufige Fallback-Suche (rekursiv, .ini-Scan, Breitsuche, Registry)
+- **ConvertTo-HTMLTable** – Link-Spalte wird korrekt als HTML gerendert
+- **Anti-Malware Status** – Nur noch bei vorhandener FIP-FS Engine als aktiv markiert
 ### 📦 Neue System- & Sicherheitschecks (v1.7)
 - **Windows Features & Rollen** – Installierte Server Rollen per CIM/DISM
 - **.NET Framework Version & DLLs** – Release-Key, Assembly-Versionen
@@ -257,6 +262,9 @@ Das generierte Dokument enthält automatisch:
 ✅ **Security CVE Prüfung** (v1.7)  
 ✅ **HTTP Proxy Konfiguration** (v1.7)  
 ✅ **Installierte Antivirenlösung** (v1.7)  
+✅ **Automatic Database Reseed** (v1.8)  
+✅ **Security CVE Prüfung via BSI RSS-Feed** (v1.8)  
+✅ **FIP-FS Scan Engine Fallback** (v1.8)  
 
 ---
 
