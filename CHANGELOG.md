@@ -2,6 +2,19 @@
 
 Alle signifikanten Änderungen am Projekt werden hier dokumentiert.
 
+## [1.9] - 2026-07-15
+- ✨ **Exchange Build-Versionskatalog & Online-Abgleich**
+  - Umfassende statische Lookup-Tabelle (SE, 2019 CU15-CU12, 2016 CU23, 2013 CU23)
+  - Automatischer Online-Abgleich mit Microsoft Learn Build-Tabelle
+  - Freundlicher Produktname (z.B. "Exchange Server SE RTM Jul26SU")
+  - Update-Status: ⚠️ Warnung bei veralteter Version + Anzeige der aktuellsten Version
+  - Link zum aktuellsten Build direkt in der HTML-Tabelle
+- � **Support-End-Erkennung** – Markiert beendeten Support (2013/2016/2019) als kritisch
+- �🔄 **Online-Versionscheck** – Einmaliger Abruf von MS Learn beim Skriptstart
+- 📊 **Neue Spalten in Exchange Server Übersicht:** ProductName, LatestBuild, Status
+- 📊 **Neue Spalten in Exchange Version & Build:** ProductName, LatestBuild, Status
+- ♻️ **Fallback auf statischen Katalog** bei fehlender Internetverbindung
+
 ## [1.8] - 2026-07-10
 - ✨ **Neue Funktion: AutoReseed-Konfiguration**
   - Automatic Database Reseed (AutoReseed) Prüfung für DAG-Mitglieder

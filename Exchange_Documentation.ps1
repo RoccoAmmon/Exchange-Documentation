@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Exchange On-Premises Dokumentations-Skript (v1.8 - Exchange 2013/2016/2019 & SE Support)
+    Exchange On-Premises Dokumentations-Skript (v1.9 - Exchange 2013/2016/2019 & SE Support)
 .DESCRIPTION
     Erstellt eine umfassende HTML-Dokumentation der gesamten Exchange On-Premises Umgebung.
     Unterstützt Exchange Server 2019 und Exchange Server Subscription Edition (SE).
@@ -9,6 +9,13 @@
     WICHTIG: Diese Version verwendet CIM-Sessions mit automatischem DCOM-Fallback,
     sodass das Skript auch funktioniert, wenn WinRM (PowerShell Remoting) nicht
     korrekt konfiguriert ist.
+
+    NEU in v1.9 (Exchange Build-Versionen & Online-Abgleich):
+    - Exchange Build-Versionskatalog – Statische Lookup-Tabelle mit allen bekannten Builds
+    - Online-Versionsprüfung – Automatischer Abgleich mit Microsoft Learn (Build-Tabelle)
+    - Produktname-Anzeige – Freundlicher Name (z.B. "Exchange Server SE RTM Jul26SU")
+    - Update-Status – Warnung bei veralteter Version + Link zum aktuellsten Build
+    - Automatischer Online-Update – Versucht einmalig die aktuellste Version zu ermitteln
 
     NEU in v1.8 (AutoReseed & Fehlerkorrekturen):
     - Automatic Database Reseed (AutoReseed) – AutoDagVolumesRootFolderPath, AutoDagDatabasesRootFolderPath, Spare Volumes
@@ -488,8 +495,8 @@ function ConvertTo-HTMLTable {
             foreach ($header in $headers) {
                 $value = $row.$header
                 if ($null -eq $value) { $value = "-" }
-                # "Link"-Spalten nicht encodieren (HTML-Tags erlauben)
-                if ($header -eq "Link") {
+                # Bestimmte Spalten nicht encodieren (HTML-Tags erlauben für Links & Status)
+                if ($header -eq "Link" -or $header -eq "Status" -or $header -eq "LatestBuild") {
                     $html += "<td>$value</td>"
                 } else {
                     $html += "<td>$([System.Web.HttpUtility]::HtmlEncode($value.ToString()))</td>"
@@ -2014,7 +2021,45 @@ function Get-PatchInformation {
             # Exchange Server Details via EMS (läuft lokal über Snap-In, kein WinRM nötig)
             $exServerDetail = Get-ExchangeServer -Identity $server -ErrorAction SilentlyContinue |
                 Select-Object Name, Edition, AdminDisplayVersion, ServerRole, Site,
-                    IsMailboxServer, IsClientAccessServer
+                    IsMailboxServer, IsClientAccessServer,
+                    @{N='BuildNumber';E={
+                        if ($_.AdminDisplayVersion -match 'Version\s+(\d+\.\d+)\s*\(Build\s+(\d+)\.(\d+)\)') {
+                            "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+                        } elseif ($_.AdminDisplayVersion -match '(\d+\.\d+\.\d+\.\d+)') {
+                            $Matches[1]
+                        } else { '' }
+                    }},
+                    @{N='ProductName';E={
+                        $bn = ""
+                        if ($_.AdminDisplayVersion -match 'Version\s+(\d+\.\d+)\s*\(Build\s+(\d+)\.(\d+)\)') {
+                            $bn = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+                        } elseif ($_.AdminDisplayVersion -match '(\d+\.\d+\.\d+\.\d+)') {
+                            $bn = $Matches[1]
+                        }
+                        if ($bn) { (Get-ExchangeVersionLookup -BuildNumber $bn).FriendlyName } else { '' }
+                    }},
+                    @{N='LatestBuild';E={
+                        $bn = ""
+                        if ($_.AdminDisplayVersion -match 'Version\s+(\d+\.\d+)\s*\(Build\s+(\d+)\.(\d+)\)') {
+                            $bn = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+                        } elseif ($_.AdminDisplayVersion -match '(\d+\.\d+\.\d+\.\d+)') {
+                            $bn = $Matches[1]
+                        }
+                        if ($bn) { (Get-ExchangeVersionLookup -BuildNumber $bn).LatestBuild } else { '' }
+                    }},
+                    @{N='Status';E={
+                        $bn = ""
+                        if ($_.AdminDisplayVersion -match 'Version\s+(\d+\.\d+)\s*\(Build\s+(\d+)\.(\d+)\)') {
+                            $bn = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+                        } elseif ($_.AdminDisplayVersion -match '(\d+\.\d+\.\d+\.\d+)') {
+                            $bn = $Matches[1]
+                        }
+                        if ($bn) {
+                            $vi = Get-ExchangeVersionLookup -BuildNumber $bn
+                            $supportInfo = if ($vi.SupportLabel) { "<br>$($vi.SupportLabel)" } else { "" }
+                            if ($vi.IsLatest) { "✅ Aktuell$supportInfo" } else { "⚠️ Veraltet – Neuste: <a href='$($vi.LatestLink)' target='_blank'>$($vi.LatestBuild)</a> ($($vi.LatestName))$supportInfo" }
+                        } else { '' }
+                    }}
 
             $serverHTML = "<h3 class='server-break'>Server: $server</h3>"
             $serverHTML += "<h4>Exchange Server Details (Management Shell)</h4>"
@@ -2232,6 +2277,44 @@ function Get-ExchangeServerOverview {
                         }
                         else { 'Unbekannt' }
                     } else { 'Unbekannt' }
+                }},
+                @{N='BuildNumber';E={
+                    if ($_.AdminDisplayVersion -match 'Version\s+(\d+\.\d+)\s*\(Build\s+(\d+)\.(\d+)\)') {
+                        "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+                    } elseif ($_.AdminDisplayVersion -match '(\d+\.\d+\.\d+\.\d+)') {
+                        $Matches[1]
+                    } else { '' }
+                }},
+                @{N='ProductName';E={
+                    $bn = ""
+                    if ($_.AdminDisplayVersion -match 'Version\s+(\d+\.\d+)\s*\(Build\s+(\d+)\.(\d+)\)') {
+                        $bn = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+                    } elseif ($_.AdminDisplayVersion -match '(\d+\.\d+\.\d+\.\d+)') {
+                        $bn = $Matches[1]
+                    }
+                    if ($bn) { (Get-ExchangeVersionLookup -BuildNumber $bn).FriendlyName } else { '' }
+                }},
+                @{N='LatestBuild';E={
+                    $bn = ""
+                    if ($_.AdminDisplayVersion -match 'Version\s+(\d+\.\d+)\s*\(Build\s+(\d+)\.(\d+)\)') {
+                        $bn = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+                    } elseif ($_.AdminDisplayVersion -match '(\d+\.\d+\.\d+\.\d+)') {
+                        $bn = $Matches[1]
+                    }
+                    if ($bn) { (Get-ExchangeVersionLookup -BuildNumber $bn).LatestBuild } else { '' }
+                }},
+                @{N='Status';E={
+                    $bn = ""
+                    if ($_.AdminDisplayVersion -match 'Version\s+(\d+\.\d+)\s*\(Build\s+(\d+)\.(\d+)\)') {
+                        $bn = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+                    } elseif ($_.AdminDisplayVersion -match '(\d+\.\d+\.\d+\.\d+)') {
+                        $bn = $Matches[1]
+                    }
+                    if ($bn) {
+                        $vi = Get-ExchangeVersionLookup -BuildNumber $bn
+                        $supportInfo = if ($vi.SupportLabel) { "<br>$($vi.SupportLabel)" } else { "" }
+                        if ($vi.IsLatest) { "✅ Aktuell$supportInfo" } else { "⚠️ Veraltet – Neuste: <a href='$($vi.LatestLink)' target='_blank'>$($vi.LatestBuild)</a> ($($vi.LatestName))$supportInfo" }
+                    } else { '' }
                 }},
                 WhenCreated, WhenChanged
 
@@ -7218,7 +7301,7 @@ function Get-SecurityCVEInfo {
 
         # Relevante Einträge für Exchange und Windows filtern
         $relevantEntries = $entries | Where-Object {
-            "$($_.title) $($_.description)" -match "Microsoft|Exchange"
+            "$($_.title) $($_.description)" -match "Microsoft Windows |Exchange"
         }
 
         if ($relevantEntries) {
@@ -7752,11 +7835,242 @@ function Get-AutoReseedInfo {
     New-HTMLSection -Title "Automatic Database Reseed (AutoReseed)" -Category "Exchange Basis" -Content $arHTML
 }
 
-#endregion
+# ---------------------------------------------------------------
+# 58. EXCHANGE VERSION CATALOG & LOOKUP
+# ---------------------------------------------------------------
+$script:ExchangeVersionCatalog = @{
+    # === Exchange Server SE (15.2.2xxx) ===
+    "15.2.2562.45" = @{ Name = "Exchange Server SE RTM Jul26SU";          Link = "https://support.microsoft.com/help/5103212"; Date = "2026-07-14" }
+    "15.2.2562.43" = @{ Name = "Exchange Server SE RTM Jun26SU";          Link = "https://support.microsoft.com/help/5094139"; Date = "2026-06-09" }
+    "15.2.2562.41" = @{ Name = "Exchange Server SE RTM May26HU";          Link = "https://support.microsoft.com/help/5081755"; Date = "2026-05-07" }
+    "15.2.2562.37" = @{ Name = "Exchange Server SE RTM Feb26SU";          Link = "https://support.microsoft.com/help/5074992"; Date = "2026-02-10" }
+    "15.2.2562.35" = @{ Name = "Exchange Server SE RTM Dec25SU";          Link = "https://support.microsoft.com/help/5071876"; Date = "2025-12-09" }
+    "15.2.2562.29" = @{ Name = "Exchange Server SE RTM Oct25SU";          Link = "https://support.microsoft.com/help/5066366"; Date = "2025-10-14" }
+    "15.2.2562.27" = @{ Name = "Exchange Server SE RTM Sep25HU";          Link = "https://support.microsoft.com/help/5066373"; Date = "2025-09-08" }
+    "15.2.2562.20" = @{ Name = "Exchange Server SE RTM Aug25SU";          Link = "https://support.microsoft.com/help/5063224"; Date = "2025-08-12" }
+    "15.2.2562.17" = @{ Name = "Exchange Server SE RTM";                  Link = "https://www.microsoft.com/download/details.aspx?id=108244"; Date = "2025-07-01" }
 
-#region ============================================================
-# HTML-DOKUMENT GENERIERUNG
-#endregion ============================================================
+    # === Exchange Server 2019 CU15 (15.2.1748.xxx) ===
+    "15.2.1748.48" = @{ Name = "Exchange Server 2019 CU15 Jul26SU";       Link = "https://support.microsoft.com/help/5103213"; Date = "2026-07-14" }
+    "15.2.1748.46" = @{ Name = "Exchange Server 2019 CU15 Jun26SU";       Link = "https://support.microsoft.com/help/5094140"; Date = "2026-06-09" }
+    "15.2.1748.43" = @{ Name = "Exchange Server 2019 CU15 Feb26SU";       Link = "https://support.microsoft.com/help/5074993"; Date = "2026-02-10" }
+    "15.2.1748.42" = @{ Name = "Exchange Server 2019 CU15 Dez25SU";       Link = "https://support.microsoft.com/help/5071875"; Date = "2025-12-09" }
+    "15.2.1748.39" = @{ Name = "Exchange Server 2019 CU15 Oct25SU";       Link = "https://support.microsoft.com/help/5066367"; Date = "2025-10-14" }
+    "15.2.1748.37" = @{ Name = "Exchange Server 2019 CU15 Sep25HU";       Link = "https://support.microsoft.com/help/5066372"; Date = "2025-09-08" }
+    "15.2.1748.36" = @{ Name = "Exchange Server 2019 CU15 Aug25SU";       Link = "https://support.microsoft.com/help/5063221"; Date = "2025-08-12" }
+    "15.2.1748.26" = @{ Name = "Exchange Server 2019 CU15 Mai25HU";       Link = "https://support.microsoft.com/help/5057651"; Date = "2025-05-29" }
+    "15.2.1748.24" = @{ Name = "Exchange Server 2019 CU15 Apr25HU";       Link = "https://support.microsoft.com/help/5050672"; Date = "2025-04-18" }
+    "15.2.1748.10" = @{ Name = "Exchange Server 2019 CU15 (2025H1)";      Link = "https://www.microsoft.com/download/details.aspx?id=106402"; Date = "2025-02-10" }
+
+    # === Exchange Server 2019 CU14 (15.2.1544.xxx) ===
+    "15.2.1544.43" = @{ Name = "Exchange Server 2019 CU14 Jul26SU";       Link = "https://support.microsoft.com/help/5103214"; Date = "2026-07-14" }
+    "15.2.1544.41" = @{ Name = "Exchange Server 2019 CU14 Jun26SU";       Link = "https://support.microsoft.com/help/5094142"; Date = "2026-06-09" }
+    "15.2.1544.39" = @{ Name = "Exchange Server 2019 CU14 Feb26SU";       Link = "https://support.microsoft.com/help/5074994"; Date = "2026-02-10" }
+    "15.2.1544.37" = @{ Name = "Exchange Server 2019 CU14 Dez25SU";       Link = "https://support.microsoft.com/help/5071874"; Date = "2025-12-09" }
+    "15.2.1544.36" = @{ Name = "Exchange Server 2019 CU14 Oct25SU";       Link = "https://support.microsoft.com/help/5066368"; Date = "2025-10-14" }
+    "15.2.1544.34" = @{ Name = "Exchange Server 2019 CU14 Sep25HU";       Link = "https://support.microsoft.com/help/5066371"; Date = "2025-09-08" }
+    "15.2.1544.33" = @{ Name = "Exchange Server 2019 CU14 Aug25SU";       Link = "https://support.microsoft.com/help/5063222"; Date = "2025-08-12" }
+    "15.2.1544.27" = @{ Name = "Exchange Server 2019 CU14 Mai25HU";       Link = "https://support.microsoft.com/help/5057652"; Date = "2025-05-29" }
+    "15.2.1544.25" = @{ Name = "Exchange Server 2019 CU14 Apr25HU";       Link = "https://support.microsoft.com/help/5050673"; Date = "2025-04-18" }
+    "15.2.1544.14" = @{ Name = "Exchange Server 2019 CU14 Nov24SUv2";     Link = "https://support.microsoft.com/help/5049233"; Date = "2024-11-27" }
+    "15.2.1544.13" = @{ Name = "Exchange Server 2019 CU14 Nov24SU";       Link = "https://support.microsoft.com/help/5044062"; Date = "2024-11-12" }
+    "15.2.1544.11" = @{ Name = "Exchange Server 2019 CU14 Apr24HU";       Link = "https://support.microsoft.com/help/5037224"; Date = "2024-04-23" }
+    "15.2.1544.9"  = @{ Name = "Exchange Server 2019 CU14 Mar24SU";       Link = "https://support.microsoft.com/help/5036401"; Date = "2024-03-12" }
+    "15.2.1544.4"  = @{ Name = "Exchange Server 2019 CU14 (2024H1)";      Link = "https://www.microsoft.com/download/details.aspx?id=105878"; Date = "2024-02-13" }
+
+    # === Exchange Server 2019 CU13 (15.2.1258.xxx) ===
+    "15.2.1258.39" = @{ Name = "Exchange Server 2019 CU13 Nov24SUv2";     Link = "https://support.microsoft.com/help/5049233"; Date = "2024-11-27" }
+    "15.2.1258.38" = @{ Name = "Exchange Server 2019 CU13 Nov24SU";       Link = "https://support.microsoft.com/help/5044062"; Date = "2024-11-12" }
+    "15.2.1258.34" = @{ Name = "Exchange Server 2019 CU13 Apr24HU";       Link = "https://support.microsoft.com/help/5037224"; Date = "2024-04-23" }
+    "15.2.1258.32" = @{ Name = "Exchange Server 2019 CU13 Mar24SU";       Link = "https://support.microsoft.com/help/5036402"; Date = "2024-03-12" }
+    "15.2.1258.28" = @{ Name = "Exchange Server 2019 CU13 Nov23SU";       Link = "https://support.microsoft.com/help/5032146"; Date = "2023-11-14" }
+    "15.2.1258.27" = @{ Name = "Exchange Server 2019 CU13 Oct23SU";       Link = "https://support.microsoft.com/help/5030877"; Date = "2023-10-10" }
+    "15.2.1258.25" = @{ Name = "Exchange Server 2019 CU13 Aug23SUv2";     Link = "https://support.microsoft.com/help/5030524"; Date = "2023-08-15" }
+    "15.2.1258.23" = @{ Name = "Exchange Server 2019 CU13 Aug23SU";       Link = "https://support.microsoft.com/help/5029388"; Date = "2023-08-08" }
+    "15.2.1258.16" = @{ Name = "Exchange Server 2019 CU13 Jun23SU";       Link = "https://support.microsoft.com/help/5026261"; Date = "2023-06-13" }
+    "15.2.1258.12" = @{ Name = "Exchange Server 2019 CU13 (2023H1)";      Link = "https://www.microsoft.com/download/details.aspx?id=105180"; Date = "2023-05-03" }
+
+    # === Exchange Server 2019 CU12 (15.2.1118.xxx) ===
+    "15.2.1118.40" = @{ Name = "Exchange Server 2019 CU12 Nov23SU";       Link = "https://support.microsoft.com/help/5032146"; Date = "2023-11-14" }
+    "15.2.1118.39" = @{ Name = "Exchange Server 2019 CU12 Oct23SU";       Link = "https://support.microsoft.com/help/5030877"; Date = "2023-10-10" }
+    "15.2.1118.37" = @{ Name = "Exchange Server 2019 CU12 Aug23SUv2";     Link = "https://support.microsoft.com/help/5030524"; Date = "2023-08-15" }
+    "15.2.1118.36" = @{ Name = "Exchange Server 2019 CU12 Aug23SU";       Link = "https://support.microsoft.com/help/5029388"; Date = "2023-08-08" }
+    "15.2.1118.30" = @{ Name = "Exchange Server 2019 CU12 Jun23SU";       Link = "https://support.microsoft.com/help/5026261"; Date = "2023-06-13" }
+    "15.2.1118.26" = @{ Name = "Exchange Server 2019 CU12 Mar23SU";       Link = "https://support.microsoft.com/help/5024296"; Date = "2023-03-14" }
+    "15.2.1118.25" = @{ Name = "Exchange Server 2019 CU12 Feb23SU";       Link = "https://support.microsoft.com/help/5023038"; Date = "2023-02-14" }
+    "15.2.1118.21" = @{ Name = "Exchange Server 2019 CU12 Jan23SU";       Link = "https://support.microsoft.com/help/5022193"; Date = "2023-01-10" }
+    "15.2.1118.20" = @{ Name = "Exchange Server 2019 CU12 Nov22SU";       Link = "https://support.microsoft.com/help/5019758"; Date = "2022-11-08" }
+    "15.2.1118.15" = @{ Name = "Exchange Server 2019 CU12 Oct22SU";       Link = "https://support.microsoft.com/help/5019077"; Date = "2022-10-11" }
+    "15.2.1118.12" = @{ Name = "Exchange Server 2019 CU12 Aug22SU";       Link = "https://support.microsoft.com/help/5015322"; Date = "2022-08-09" }
+    "15.2.1118.9"  = @{ Name = "Exchange Server 2019 CU12 Mrz22SU";       Link = "https://support.microsoft.com/help/5014261"; Date = "2022-05-10" }
+    "15.2.1118.7"  = @{ Name = "Exchange Server 2019 CU12 (2022H1)";      Link = "https://www.microsoft.com/download/details.aspx?id=104131"; Date = "2022-04-20" }
+
+    # === Exchange Server 2016 CU23 (15.1.2507.xxx) ===
+    "15.1.2507.71" = @{ Name = "Exchange Server 2016 CU23 Jul26SU";       Link = "https://support.microsoft.com/help/5103215"; Date = "2026-07-14" }
+    "15.1.2507.69" = @{ Name = "Exchange Server 2016 CU23 Jun26SU";       Link = "https://support.microsoft.com/help/5094144"; Date = "2026-06-09" }
+    "15.1.2507.66" = @{ Name = "Exchange Server 2016 CU23 Feb26SU";       Link = "https://support.microsoft.com/help/5074995"; Date = "2026-02-10" }
+    "15.1.2507.63" = @{ Name = "Exchange Server 2016 CU23 Dez25SU";       Link = "https://support.microsoft.com/help/5071873"; Date = "2025-12-09" }
+    "15.1.2507.61" = @{ Name = "Exchange Server 2016 CU23 Oct25SU";       Link = "https://support.microsoft.com/help/5066369"; Date = "2025-10-14" }
+    "15.1.2507.59" = @{ Name = "Exchange Server 2016 CU23 Sep25HU";       Link = "https://support.microsoft.com/help/5066370"; Date = "2025-09-08" }
+    "15.1.2507.58" = @{ Name = "Exchange Server 2016 CU23 Aug25SU";       Link = "https://support.microsoft.com/help/5063223"; Date = "2025-08-12" }
+    "15.1.2507.57" = @{ Name = "Exchange Server 2016 CU23 Mai25HU";       Link = "https://support.microsoft.com/help/5057653"; Date = "2025-05-29" }
+    "15.1.2507.55" = @{ Name = "Exchange Server 2016 CU23 Apr25HU";       Link = "https://support.microsoft.com/help/5050674"; Date = "2025-04-18" }
+    "15.1.2507.44" = @{ Name = "Exchange Server 2016 CU23 Nov24SUv2";     Link = "https://support.microsoft.com/help/5049233"; Date = "2024-11-27" }
+    "15.1.2507.43" = @{ Name = "Exchange Server 2016 CU23 Nov24SU";       Link = "https://support.microsoft.com/help/5044062"; Date = "2024-11-12" }
+    "15.1.2507.39" = @{ Name = "Exchange Server 2016 CU23 Apr24HU";       Link = "https://support.microsoft.com/help/5037224"; Date = "2024-04-23" }
+    "15.1.2507.37" = @{ Name = "Exchange Server 2016 CU23 Mar24SU";       Link = "https://support.microsoft.com/help/5036386"; Date = "2024-03-12" }
+    "15.1.2507.35" = @{ Name = "Exchange Server 2016 CU23 Nov23SU";       Link = "https://support.microsoft.com/help/5032147"; Date = "2023-11-14" }
+    "15.1.2507.34" = @{ Name = "Exchange Server 2016 CU23 Oct23SU";       Link = "https://support.microsoft.com/help/5030877"; Date = "2023-10-10" }
+    "15.1.2507.32" = @{ Name = "Exchange Server 2016 CU23 Aug23SUv2";     Link = "https://support.microsoft.com/help/5030524"; Date = "2023-08-15" }
+    "15.1.2507.31" = @{ Name = "Exchange Server 2016 CU23 Aug23SU";       Link = "https://support.microsoft.com/help/5029388"; Date = "2023-08-08" }
+    "15.1.2507.27" = @{ Name = "Exchange Server 2016 CU23 Jun23SU";       Link = "https://support.microsoft.com/help/5025903"; Date = "2023-06-13" }
+    "15.1.2507.23" = @{ Name = "Exchange Server 2016 CU23 Mar23SU";       Link = "https://support.microsoft.com/help/5024296"; Date = "2023-03-14" }
+    "15.1.2507.21" = @{ Name = "Exchange Server 2016 CU23 Feb23SU";       Link = "https://support.microsoft.com/help/5023038"; Date = "2023-02-14" }
+    "15.1.2507.17" = @{ Name = "Exchange Server 2016 CU23 Jan23SU";       Link = "https://support.microsoft.com/help/5022143"; Date = "2023-01-10" }
+    "15.1.2507.16" = @{ Name = "Exchange Server 2016 CU23 Nov22SU";       Link = "https://support.microsoft.com/help/5019758"; Date = "2022-11-08" }
+    "15.1.2507.13" = @{ Name = "Exchange Server 2016 CU23 Oct22SU";       Link = "https://support.microsoft.com/help/5019077"; Date = "2022-10-11" }
+    "15.1.2507.12" = @{ Name = "Exchange Server 2016 CU23 Aug22SU";       Link = "https://support.microsoft.com/help/5015322"; Date = "2022-08-09" }
+    "15.1.2507.9"  = @{ Name = "Exchange Server 2016 CU23 Mai22SU";       Link = "https://support.microsoft.com/help/5014261"; Date = "2022-05-10" }
+    "15.1.2507.6"  = @{ Name = "Exchange Server 2016 CU23 (2022H1)";      Link = "https://www.microsoft.com/download/details.aspx?id=104132"; Date = "2022-04-20" }
+
+    # === Exchange Server 2013 CU23 (15.0.1497.xxx) ===
+    "15.0.1497.48" = @{ Name = "Exchange Server 2013 CU23 Mar23SU";       Link = "https://support.microsoft.com/help/5024296"; Date = "2023-03-14" }
+    "15.0.1497.47" = @{ Name = "Exchange Server 2013 CU23 Feb23SU";       Link = "https://support.microsoft.com/help/5023038"; Date = "2023-02-14" }
+    "15.0.1497.45" = @{ Name = "Exchange Server 2013 CU23 Jan23SU";       Link = "https://support.microsoft.com/help/5022188"; Date = "2023-01-10" }
+    "15.0.1497.44" = @{ Name = "Exchange Server 2013 CU23 Nov22SU";       Link = "https://support.microsoft.com/help/5019758"; Date = "2022-11-08" }
+    "15.0.1497.42" = @{ Name = "Exchange Server 2013 CU23 Oct22SU";       Link = "https://support.microsoft.com/help/5019076"; Date = "2022-10-11" }
+    "15.0.1497.40" = @{ Name = "Exchange Server 2013 CU23 Aug22SU";       Link = "https://support.microsoft.com/help/5015321"; Date = "2022-08-09" }
+    "15.0.1497.36" = @{ Name = "Exchange Server 2013 CU23 Mai22SU";       Link = "https://support.microsoft.com/help/5014260"; Date = "2022-05-10" }
+    "15.0.1497.33" = @{ Name = "Exchange Server 2013 CU23 Mar22SU";       Link = "https://support.microsoft.com/help/5010324"; Date = "2022-03-08" }
+    "15.0.1497.28" = @{ Name = "Exchange Server 2013 CU23 Jan22SU";       Link = "https://support.microsoft.com/help/5008631"; Date = "2022-01-11" }
+    "15.0.1497.26" = @{ Name = "Exchange Server 2013 CU23 Nov21SU";       Link = "https://support.microsoft.com/help/5007409"; Date = "2021-11-09" }
+    "15.0.1497.24" = @{ Name = "Exchange Server 2013 CU23 Oct21SU";       Link = "https://support.microsoft.com/help/5007011"; Date = "2021-10-12" }
+    "15.0.1497.23" = @{ Name = "Exchange Server 2013 CU23 Jul21SU";       Link = "https://support.microsoft.com/help/5004778"; Date = "2021-07-13" }
+    "15.0.1497.18" = @{ Name = "Exchange Server 2013 CU23 Mai21SU";       Link = "https://support.microsoft.com/help/5003435"; Date = "2021-05-11" }
+    "15.0.1497.15" = @{ Name = "Exchange Server 2013 CU23 Apr21SU";       Link = "https://support.microsoft.com/help/5001779"; Date = "2021-04-13" }
+    "15.0.1497.12" = @{ Name = "Exchange Server 2013 CU23 Mrz21SU";       Link = "https://support.microsoft.com/help/5000871"; Date = "2021-03-02" }
+    "15.0.1497.2"  = @{ Name = "Exchange Server 2013 CU23";               Link = "https://www.microsoft.com/download/details.aspx?id=58392"; Date = "2019-06-18" }
+}
+
+# Bekannte neueste Version pro Major-Version (Fallback, wenn Online-Check fehlschlägt)
+$script:ExchangeLatestPerMajor = @{
+    "15.2.2" = @{ Build = "15.2.2562.45"; Name = "Exchange Server SE RTM Jul26SU"; Link = "https://support.microsoft.com/help/5103212"; SupportEnd = $null; SupportLabel = "Aktiv" }
+    "15.2.1" = @{ Build = "15.2.1748.48"; Name = "Exchange Server 2019 CU15 Jul26SU"; Link = "https://support.microsoft.com/help/5103213"; SupportEnd = "2025-10-14"; SupportLabel = "🔴 Kritisch (Support beendet)" }
+    "15.2.0" = @{ Build = "15.2.1544.43"; Name = "Exchange Server 2019 CU14 Jul26SU"; Link = "https://support.microsoft.com/help/5103214"; SupportEnd = "2025-10-14"; SupportLabel = "🔴 Kritisch (Support beendet)" }
+    "15.2."  = @{ Build = "15.2.1748.48"; Name = "Exchange Server 2019 CU15 Jul26SU"; Link = "https://support.microsoft.com/help/5103213"; SupportEnd = "2025-10-14"; SupportLabel = "🔴 Kritisch (Support beendet)" }
+    "15.1."  = @{ Build = "15.1.2507.71"; Name = "Exchange Server 2016 CU23 Jul26SU"; Link = "https://support.microsoft.com/help/5103215"; SupportEnd = "2025-10-14"; SupportLabel = "🔴 Kritisch (Support beendet)" }
+    "15.0."  = @{ Build = "15.0.1497.48"; Name = "Exchange Server 2013 CU23 Mar23SU"; Link = "https://support.microsoft.com/help/5024296"; SupportEnd = "2023-04-11"; SupportLabel = "🔴 Kritisch (Support beendet)" }
+}
+
+function Get-ExchangeVersionLookup {
+    <#
+    .SYNOPSIS
+        Sucht einen Exchange Build (z.B. 15.2.2562.17) im Katalog und gibt den
+        Anzeigenamen sowie die aktuellste Version dieser Serie zurück.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BuildNumber
+    )
+
+    $result = [PSCustomObject]@{
+        BuildNumber     = $BuildNumber
+        FriendlyName    = "Unbekannt"
+        CatalogLink     = ""
+        LatestBuild     = ""
+        LatestName      = ""
+        LatestLink      = ""
+        IsLatest        = $true
+        StatusIcon      = "✅"
+        SupportEnd      = $null
+        SupportLabel    = ""
+    }
+
+    # Build normalisieren (Punkte entfernen für Vergleich)
+    $cleanBuild = $BuildNumber.Trim()
+
+    # 1. Exakter Match im Katalog
+    if ($script:ExchangeVersionCatalog.ContainsKey($cleanBuild)) {
+        $entry = $script:ExchangeVersionCatalog[$cleanBuild]
+        $result.FriendlyName = $entry.Name
+        $result.CatalogLink  = $entry.Link
+    }
+
+    # 2. Major-Version bestimmen für Latest-Check
+    $majorKey = ""
+    if ($cleanBuild -match "^15\.2\.2") { $majorKey = "15.2.2" }
+    elseif ($cleanBuild -match "^15\.2\.1") { $majorKey = "15.2.1" }
+    elseif ($cleanBuild -match "^15\.2\.") { $majorKey = "15.2." }
+    elseif ($cleanBuild -match "^15\.1\.") { $majorKey = "15.1." }
+    elseif ($cleanBuild -match "^15\.0\.") { $majorKey = "15.0." }
+
+    if ($majorKey -and $script:ExchangeLatestPerMajor.ContainsKey($majorKey)) {
+        $latest = $script:ExchangeLatestPerMajor[$majorKey]
+        $result.LatestBuild = $latest.Build
+        $result.LatestName  = $latest.Name
+        $result.LatestLink  = $latest.Link
+        $result.SupportEnd   = $latest.SupportEnd
+        $result.SupportLabel = $latest.SupportLabel
+
+        # Prüfen ob es sich um das neuste Update handelt
+        if ($cleanBuild -ne $latest.Build) {
+            $result.IsLatest = $false
+            $result.StatusIcon = "⚠️"
+        }
+    }
+
+    return $result
+}
+
+function Update-ExchangeVersionCatalogOnline {
+    <#
+    .SYNOPSIS
+        Versucht die Microsoft Build-Webseite zu parsen und den Katalog zu aktualisieren.
+        (Nicht kritisch – nur Verbesserung gegenüber statischem Katalog)
+    #>
+    Write-Log -Message "=== Prüfe Exchange Build-Versionen online (MS Learn) ===" -Level "INFO"
+
+    try {
+        $msUrl = "https://learn.microsoft.com/de-de/exchange/new-features/build-numbers-and-release-dates"
+        $webResponse = Invoke-WebRequest -Uri $msUrl -UseBasicParsing -ErrorAction SilentlyContinue
+        if (-not $webResponse) { throw "MS Learn nicht erreichbar" }
+
+        # Prüfe ob wir die Seite parsen können (robuster Regex)
+        $content = $webResponse.Content
+
+        # Aktuelle Tabelle mit "Exchange Server SE" suchen
+        if ($content -match '(?s)Exchange Server SE.*?Buildnummer\(langes Format\)</th>\s*</tr>\s*((?:<tr>.*?</tr>\s*)+)') {
+            $rows = $Matches[1]
+            $sePattern = '<td>\s*<a[^>]*href="([^"]*)"[^>]*>([^<]+)</a>\s*</td>\s*<td[^>]*>([^<]*)</td>\s*<td[^>]*>([^<]*)</td>\s*<td[^<]*>[^<]*</td>'
+            if ($rows -match $sePattern) {
+                Write-Log -Message "MS Build-Seite geparst – SE-Zeile gefunden: $($Matches[2]) ($($Matches[4]))" -Level "INFO"
+                # Aktualisiere Latest SE
+                $build = ($Matches[4] -replace '\.0(\d)', '.$1').Trim()
+                if ($Matches[4] -match '(\d+\.\d+)\.(\d+)\.(\d+)') {
+                    $build = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+                }
+                if ($build -and $script:ExchangeLatestPerMajor.ContainsKey("15.2.2")) {
+                    # Support-Daten aus bestehendem Eintrag übernehmen
+                    $existing = $script:ExchangeLatestPerMajor["15.2.2"]
+                    $script:ExchangeLatestPerMajor["15.2.2"] = @{
+                        Build = $build
+                        Name  = $Matches[2]
+                        Link  = $Matches[1]
+                        SupportEnd   = $existing.SupportEnd
+                        SupportLabel = $existing.SupportLabel
+                    }
+                }
+            }
+        }
+
+        Write-Log -Message "Online-Check für Exchange Builds abgeschlossen." -Level "INFO"
+    } catch {
+        Write-Log -Message "Online-Versionscheck (MS Learn) fehlgeschlagen: $_" -Level "WARNING"
+    }
+}
+
+#endregion
 
 function Build-HTMLDocument {
     <#
@@ -9111,6 +9425,9 @@ try {
     # Edition erkennen (2019 vs. SE)
     Get-ExchangeEdition
 
+    # Online-Versionscheck (Exchange Builds von MS Learn abrufen)
+    Update-ExchangeVersionCatalogOnline
+
     # DocTitle dynamisch anpassen
     $script:DocTitle = "Exchange Server $($script:ExchangeEdition) - Umgebungsdokumentation"
 
@@ -9195,7 +9512,7 @@ try {
     # Konsolenausgabe
     Write-Host "`n" -NoNewline
     Write-Host "===============================================================" -ForegroundColor Cyan
-    Write-Host "  Exchange Dokumentation abgeschlossen! (v1.7 - 2019/SE)" -ForegroundColor Cyan
+    Write-Host "  Exchange Dokumentation abgeschlossen! (v1.9 - 2013/2016/2019/SE)" -ForegroundColor Cyan
     Write-Host "===============================================================" -ForegroundColor Cyan
     foreach ($f in $createdFiles) {
         Write-Host "  Datei: $f" -ForegroundColor White
