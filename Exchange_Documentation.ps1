@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Exchange On-Premises Dokumentations-Skript (v1.9 - Exchange 2013/2016/2019 & SE Support)
+    Exchange On-Premises Dokumentations-Skript (v2.0 - Exchange 2013/2016/2019 & SE Support, DE/EN)
 .DESCRIPTION
     Erstellt eine umfassende HTML-Dokumentation der gesamten Exchange On-Premises Umgebung.
     Unterstützt Exchange Server 2019 und Exchange Server Subscription Edition (SE).
@@ -9,6 +9,14 @@
     WICHTIG: Diese Version verwendet CIM-Sessions mit automatischem DCOM-Fallback,
     sodass das Skript auch funktioniert, wenn WinRM (PowerShell Remoting) nicht
     korrekt konfiguriert ist.
+
+    NEU in v2.0 (Mehrsprachigkeit / Multi-Language):
+    - Sprachschalter -Language DE|EN für Skript UND Reports
+    - Sprachauswahl direkt in der GUI (Umschaltung Deutsch/Englisch)
+    - Vollständig lokalisierte GUI, Konsolen- und Log-Ausgaben
+    - Lokalisierte Reports (HTML/PDF/Markdown): Deckblatt, Inhaltsverzeichnis,
+      Sektionstitel, Kategorien, Tabellenüberschriften und Statustexte
+    - Sprachabhängige Datei- und Log-Namen (Exchange_Documentation_*.html)
 
     NEU in v1.9 (Exchange Build-Versionen & Online-Abgleich):
     - Exchange Build-Versionskatalog – Statische Lookup-Tabelle mit allen bekannten Builds
@@ -165,18 +173,26 @@
 .PARAMETER CompanyName
     Name der Firma für die Dokumentation.
 
+.PARAMETER Language
+    Sprache für GUI, Konsolenausgaben, Logs und Reports. Gültige Werte: DE, EN.
+    Standard: DE
+
 .EXAMPLE
     .\Exchange_Dokumentation.ps1 -ExchangeServers @("EX01","EX02") -CompanyName "Contoso GmbH"
 
 .EXAMPLE
     .\Exchange_Dokumentation.ps1 -ExchangeServers @("EX01") -CompanyName "Meine Firma" -OutputPath "D:\Doku"
 
+.EXAMPLE
+    .\Exchange_Dokumentation.ps1 -ExchangeServers @("EX01") -CompanyName "Contoso Ltd" -Language EN
+
 .NOTES
     Autor:           Rocco Ammon
-    Version:         1.7
+    Version:         2.0
     Erstellt:        2026-03-05
-    Letzte Änderung: 2026-07-10
-    Änderungen:      v1.7 - Erweiterte System- & Sicherheitschecks:
+    Letzte Änderung: 2026-08-31
+    Änderungen:      v2.0 - Mehrsprachigkeit (DE/EN) für Skript, GUI und Reports
+                     v1.7 - Erweiterte System- & Sicherheitschecks:
                           • Windows Features & Rollen (installierte Server Rollen)
                           • .NET Framework Version & DLLs (Release-Key, Assembly-Versionen)
                           • Ausstehende Neustarts (6 Prüfmethoden)
@@ -232,6 +248,10 @@ param(
     [Parameter(Mandatory = $false, HelpMessage = "Firmenname für die Dokumentation")]
     [string]$CompanyName = "Meine Organisation",
 
+    [Parameter(Mandatory = $false, HelpMessage = "Sprache / Language: DE oder EN")]
+    [ValidateSet("DE", "EN")]
+    [string]$Language = "DE",
+
     [Parameter(Mandatory = $false, HelpMessage = "Ausgabeformate: HTML, PDF, Markdown")]
     [ValidateSet("HTML", "PDF", "Markdown")]
     [string[]]$OutputFormats = @("HTML"),
@@ -247,6 +267,955 @@ param(
 )
 
 #region ============================================================
+# LOKALISIERUNG / LOCALIZATION (DE / EN)
+#endregion ============================================================
+
+# Aktive Sprache (DE = Deutsch, EN = Englisch)
+$script:UILanguage = if ($Language) { $Language.ToUpperInvariant() } else { "DE" }
+
+# --- Feste UI-/Report-Bausteine (Schlüssel -> DE/EN) ---
+$script:LocUI = @{
+    AdminRequired        = @{ DE = "Das Skript erfordert Administrator-Rechte. Starte neu mit erhöhten Rechten..."; EN = "This script requires administrator rights. Restarting with elevated privileges..." }
+    AdminConfirmed       = @{ DE = "Administrator-Rechte bestätigt. Skript wird ausgeführt..."; EN = "Administrator rights confirmed. Running script..." }
+    OutputDirError       = @{ DE = "FEHLER: Ausgabeverzeichnis konnte nicht erstellt werden: {0}"; EN = "ERROR: Output directory could not be created: {0}" }
+    OutputDirCreated     = @{ DE = "Ausgabeverzeichnis erstellt: {0}"; EN = "Output directory created: {0}" }
+    LogWriteError        = @{ DE = "FEHLER beim Schreiben der Log-Datei: {0}"; EN = "ERROR while writing the log file: {0}" }
+    DocTitle             = @{ DE = "Exchange Server - Umgebungsdokumentation"; EN = "Exchange Server - Environment Documentation" }
+    DocTitleEdition      = @{ DE = "Exchange Server {0} - Umgebungsdokumentation"; EN = "Exchange Server {0} - Environment Documentation" }
+    FileNamePrefix       = @{ DE = "Exchange_Dokumentation"; EN = "Exchange_Documentation" }
+    LogFileNamePrefix    = @{ DE = "Exchange-Dokumentation"; EN = "Exchange-Documentation" }
+    Toc                  = @{ DE = "Inhaltsverzeichnis"; EN = "Table of Contents" }
+    SummaryHeading       = @{ DE = "Dokumentations-Zusammenfassung"; EN = "Documentation Summary" }
+    DocumentedServers    = @{ DE = "Dokumentierte Server"; EN = "Documented servers" }
+    CreatedOn            = @{ DE = "Erstellt am"; EN = "Created on" }
+    CreatedBy            = @{ DE = "Erstellt von"; EN = "Created by" }
+    CreatedByOn          = @{ DE = "{0} auf {1}"; EN = "{0} on {1}" }
+    SectionsLabel        = @{ DE = "Sektionen"; EN = "Sections" }
+    ErrorsLabel          = @{ DE = "Fehler"; EN = "Errors" }
+    WarningsLabel        = @{ DE = "Warnungen"; EN = "Warnings" }
+    DetectedEdition      = @{ DE = "Erkannte Edition"; EN = "Detected edition" }
+    VersionLabel         = @{ DE = "Version"; EN = "Version" }
+    VersionSuffix        = @{ DE = "2.0 (Exchange 2013/2016/2019 &amp; SE / CIM-DCOM Fallback)"; EN = "2.0 (Exchange 2013/2016/2019 &amp; SE / CIM-DCOM fallback)" }
+    GeneratorMeta        = @{ DE = "Exchange Dokumentations-Skript v2.0"; EN = "Exchange Documentation Script v2.0" }
+    FooterCreated        = @{ DE = "Erstellt"; EN = "Created" }
+    FooterTool           = @{ DE = "PowerShell Dokumentation v2.0"; EN = "PowerShell Documentation v2.0" }
+    HtmlLang             = @{ DE = "de"; EN = "en" }
+    NoDataDefault        = @{ DE = "Keine Daten verfügbar."; EN = "No data available." }
+    BuildHtmlDoc         = @{ DE = "=== Erstelle HTML-Dokument ==="; EN = "=== Building HTML document ===" }
+    BuildMdDoc           = @{ DE = "=== Erstelle Markdown-Dokument ==="; EN = "=== Building Markdown document ===" }
+    GenHtml              = @{ DE = "=== Generiere HTML-Dokument ==="; EN = "=== Generating HTML document ===" }
+    GenPdf               = @{ DE = "=== Generiere PDF-Dokument ==="; EN = "=== Generating PDF document ===" }
+    GenMd                = @{ DE = "=== Generiere Markdown-Dokument ==="; EN = "=== Generating Markdown document ===" }
+    StartBanner          = @{ DE = "Exchange Dokumentation gestartet (v2.0 - 2013/2016/2019/SE)"; EN = "Exchange documentation started (v2.0 - 2013/2016/2019/SE)" }
+    TargetServers        = @{ DE = "Zielserver: {0}"; EN = "Target servers: {0}" }
+    OutputPathLog        = @{ DE = "Ausgabepfad: {0}"; EN = "Output path: {0}" }
+    OutputFormatsLog     = @{ DE = "Ausgabeformate: {0}"; EN = "Output formats: {0}" }
+    SelectedSectionsLog  = @{ DE = "Gewählte Sektionen: {0}"; EN = "Selected sections: {0}" }
+    ConnectionModeLog    = @{ DE = "Verbindungsmodus: CIM mit automatischem DCOM Fallback"; EN = "Connection mode: CIM with automatic DCOM fallback" }
+    LanguageLog          = @{ DE = "Sprache: Deutsch (DE)"; EN = "Language: English (EN)" }
+    ExchangeToolsMissing = @{ DE = "Exchange Management Tools nicht verfügbar. Skript wird beendet."; EN = "Exchange Management Tools not available. Script is terminating." }
+    ExchangeToolsThrow   = @{ DE = "Exchange Management Tools nicht verfügbar."; EN = "Exchange Management Tools not available." }
+    CheckReachability    = @{ DE = "=== Prüfe Erreichbarkeit der Server ==="; EN = "=== Checking server reachability ===" }
+    ServerUnreachable    = @{ DE = "Server {0} ist NICHT erreichbar!"; EN = "Server {0} is NOT reachable!" }
+    ServerReachable      = @{ DE = "Server {0} ist erreichbar (Ping OK)."; EN = "Server {0} is reachable (ping OK)." }
+    PingFailed           = @{ DE = "Ping-Test für {0} fehlgeschlagen: {1}"; EN = "Ping test for {0} failed: {1}" }
+    StartCollection      = @{ DE = "=== Starte Datensammlung ({0} Sektionen) ==="; EN = "=== Starting data collection ({0} sections) ===" }
+    SectionLog           = @{ DE = "Sektion: {0} [{1}]"; EN = "Section: {0} [{1}]" }
+    SectionError         = @{ DE = "Fehler in Sektion {0}: {1}"; EN = "Error in section {0}: {1}" }
+    DocCreated           = @{ DE = "Dokumentation erfolgreich erstellt!"; EN = "Documentation created successfully!" }
+    FileLog              = @{ DE = "Datei: {0}"; EN = "File: {0}" }
+    LogFileLog           = @{ DE = "Log-Datei: {0}"; EN = "Log file: {0}" }
+    ErrWarnLog           = @{ DE = "Fehler: {0} | Warnungen: {1}"; EN = "Errors: {0} | Warnings: {1}" }
+    ConsoleDone          = @{ DE = "  Exchange Dokumentation abgeschlossen! (v2.0 - 2013/2016/2019/SE)"; EN = "  Exchange documentation completed! (v2.0 - 2013/2016/2019/SE)" }
+    ConsoleFile          = @{ DE = "  Datei: {0}"; EN = "  File: {0}" }
+    ConsoleLogFile       = @{ DE = "  Log-Datei:  {0}"; EN = "  Log file:   {0}" }
+    ConsoleErrWarn       = @{ DE = "  Fehler:     {0} | Warnungen: {1}"; EN = "  Errors:     {0} | Warnings: {1}" }
+    OpenPrompt           = @{ DE = "`nDokumentation jetzt oeffnen? (J/N)"; EN = "`nOpen documentation now? (Y/N)" }
+    OpenPromptYes        = @{ DE = "J"; EN = "Y" }
+    CriticalError        = @{ DE = "KRITISCHER FEHLER: {0}"; EN = "CRITICAL ERROR: {0}" }
+    StackTrace           = @{ DE = "Stack Trace: {0}"; EN = "Stack trace: {0}" }
+    CriticalConsole      = @{ DE = "`nKritischer Fehler! Details: {0}"; EN = "`nCritical error! Details: {0}" }
+    ScriptEnded          = @{ DE = "Skript beendet um {0}"; EN = "Script ended at {0}" }
+    NoServersGiven       = @{ DE = "Keine Exchange-Server angegeben. Bitte -ExchangeServers verwenden oder die GUI nutzen."; EN = "No Exchange servers specified. Please use -ExchangeServers or the GUI." }
+    CancelledByUser      = @{ DE = "Abgebrochen durch Benutzer (GUI)."; EN = "Cancelled by user (GUI)." }
+    # --- GUI ---
+    GuiWindowTitle       = @{ DE = "Exchange Server Dokumentation v2.0"; EN = "Exchange Server Documentation v2.0" }
+    GuiHeaderTitle       = @{ DE = "Exchange Server Dokumentation"; EN = "Exchange Server Documentation" }
+    GuiHeaderSubtitle    = @{ DE = "System-Checks · TLS/SSL · Multi-Format Export · Mehrsprachig (DE/EN)"; EN = "System checks · TLS/SSL · Multi-format export · Multilingual (DE/EN)" }
+    GuiExchangeServer    = @{ DE = "Exchange Server"; EN = "Exchange Server" }
+    GuiSelectAll         = @{ DE = "Alle auswählen"; EN = "Select all" }
+    GuiOrganisation      = @{ DE = "Organisation"; EN = "Organization" }
+    GuiOutputPath        = @{ DE = "Ausgabepfad"; EN = "Output path" }
+    GuiBrowseTooltip     = @{ DE = "Ausgabeverzeichnis wählen"; EN = "Choose output directory" }
+    GuiOutputFormats     = @{ DE = "Ausgabeformate"; EN = "Output formats" }
+    GuiSections          = @{ DE = "Dokumentationsbereiche"; EN = "Documentation areas" }
+    GuiLanguage          = @{ DE = "Sprache / Language"; EN = "Language / Sprache" }
+    GuiLangGerman        = @{ DE = "Deutsch"; EN = "German" }
+    GuiLangEnglish       = @{ DE = "Englisch"; EN = "English" }
+    GuiCancel            = @{ DE = "Abbrechen"; EN = "Cancel" }
+    GuiStart             = @{ DE = "  🚀  Dokumentation starten"; EN = "  🚀  Start documentation" }
+    GuiErrNoServer       = @{ DE = "Fehler: Bitte mindestens einen Exchange-Server auswählen."; EN = "Error: Please select at least one Exchange server." }
+    GuiErrNoPath         = @{ DE = "Fehler: Bitte einen Ausgabepfad angeben."; EN = "Error: Please specify an output path." }
+    GuiErrNoSection      = @{ DE = "Fehler: Bitte mindestens einen Dokumentationsbereich auswählen."; EN = "Error: Please select at least one documentation area." }
+    GuiErrNoFormat       = @{ DE = "Fehler: Bitte mindestens ein Ausgabeformat wählen."; EN = "Error: Please select at least one output format." }
+    GuiXamlError         = @{ DE = "FEHLER beim Laden der XAML: {0}"; EN = "ERROR while loading the XAML: {0}" }
+    GuiWpfError          = @{ DE = "FEHLER: WPF-Assemblies konnten nicht geladen werden: {0}"; EN = "ERROR: WPF assemblies could not be loaded: {0}" }
+    GuiControlError      = @{ DE = "FEHLER beim Zugriff auf GUI-Steuerelemente: {0}"; EN = "ERROR while accessing GUI controls: {0}" }
+}
+
+function Get-LocText {
+    <#
+    .SYNOPSIS
+        Liefert einen lokalisierten UI-/Report-Text zum angegebenen Schlüssel.
+    .PARAMETER Key
+        Schlüssel aus $script:LocUI.
+    .PARAMETER FormatArgs
+        Optionale Platzhalter-Werte für -f.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Key,
+
+        [Parameter(Mandatory = $false)]
+        [object[]]$FormatArgs
+    )
+
+    if (-not $script:LocUI.ContainsKey($Key)) { return $Key }
+    $entry = $script:LocUI[$Key]
+    $text  = if ($entry.ContainsKey($script:UILanguage)) { $entry[$script:UILanguage] } else { $entry["DE"] }
+    if ($FormatArgs -and $FormatArgs.Count -gt 0) { return ($text -f $FormatArgs) }
+    return $text
+}
+
+# --- Übersetzungstabelle für dynamisch erzeugte Inhalte (Deutsch|Englisch) ---
+# Wird auf Sektionstitel, Kategorien, HTML-Textknoten und Log-Meldungen angewendet.
+$script:LocContentPairs = @'
+# === Sektionstitel ===
+Hardware-Informationen & Server-Details|Hardware Information & Server Details
+Netzwerk-Konfiguration (NIC Speed & Performance)|Network Configuration (NIC Speed & Performance)
+Power Plan & Performance-Einstellungen|Power Plan & Performance Settings
+SMBv1 Status (Sicherheit & Performance)|SMBv1 Status (Security & Performance)
+Processor Core Analyse|Processor Core Analysis
+IIS Application Pool Konfiguration|IIS Application Pool Configuration
+Exchange Version & Build-Informationen|Exchange Version & Build Information
+Active Directory Informationen & Schema-Version|Active Directory Information & Schema Version
+Exchange Server Übersicht|Exchange Server Overview
+Exchange Organisationskonfiguration|Exchange Organization Configuration
+Exchange URLs / Virtuelle Verzeichnisse / Namespace & EEMS|Exchange URLs / Virtual Directories / Namespace & EEMS
+Datenbanken & DAG-Konfiguration|Databases & DAG Configuration
+MX-Records & DNS-Prüfung|MX Records & DNS Check
+Adresslisten & Globale Adressliste|Address Lists & Global Address List
+Offline-Adressbuch (OAB)|Offline Address Book (OAB)
+Mobile Device Konfiguration|Mobile Device Configuration
+Transport-Regeln (Mailflow Rules)|Transport Rules (Mail Flow Rules)
+Transportkomponenten - Physische Speicherorte|Transport Components - Physical Storage Locations
+Mailbox-Statistiken & Empfänger-Übersicht|Mailbox Statistics & Recipient Overview
+RBAC - Administratorenrollen & Mitglieder|RBAC - Administrator Roles & Members
+Event Logs (letzte 7 Tage - Fehler/Kritisch)|Event Logs (last 7 days - errors/critical)
+Anti-Spam / Anti-Malware Konfiguration|Anti-Spam / Anti-Malware Configuration
+Mailbox-Quotas & Speicher-Limits|Mailbox Quotas & Storage Limits
+SMTP-Relay Konfiguration|SMTP Relay Configuration
+Firewall-Regeln & Port-Anforderungen|Firewall Rules & Port Requirements
+Lizenzierung (Exchange & Windows)|Licensing (Exchange & Windows)
+LDAP Konnektivität (Domain Controller)|LDAP Connectivity (Domain Controller)
+Database Copies & Redundanz|Database Copies & Redundancy
+Antivirus Ausschlüsse|Antivirus Exclusions
+DKIM-Konfiguration|DKIM Configuration
+TLS/SSL Konfiguration & Best Practices|TLS/SSL Configuration & Best Practices
+Hybrid-Konfiguration (Exchange Online)|Hybrid Configuration (Exchange Online)
+Message Queue Analyse|Message Queue Analysis
+Calendar & Resource Mailbox Konfiguration|Calendar & Resource Mailbox Configuration
+Exchange Archive Konfiguration|Exchange Archive Configuration
+Windows Features & Rollen|Windows Features & Roles
+Ausstehende Neustarts (Pending Reboot)|Pending Reboots
+CPU Throttling Analyse|CPU Throttling Analysis
+Visual C++ Redistributable Versionen|Visual C++ Redistributable Versions
+Lokale Administratoren|Local Administrators
+Domain Trusts & Verschlüsselung|Domain Trusts & Encryption
+Security CVE Prüfung|Security CVE Check
+HTTP Proxy Konfiguration|HTTP Proxy Configuration
+Installierte Antivirenlösung|Installed Antivirus Solution
+NIC Receive Buffer Analyse|NIC Receive Buffer Analysis
+Sendeconnectoren|Send Connectors
+Empfangsconnectoren|Receive Connectors
+E-Mail-Adressrichtlinien|Email Address Policies
+FSMO-Rollen|FSMO Roles
+Zertifikate|Certificates
+# === Kategorien ===
+Exchange Basis|Exchange Core
+Mail-Flow|Mail Flow
+Sicherheit & TLS|Security & TLS
+Hybrid / Cloud|Hybrid / Cloud
+# === GUI-Sektionsbezeichnungen ===
+Hardware & Server-Details|Hardware & Server Details
+Installierte Software|Installed Software
+Netzwerk-Konfiguration (NIC Speed)|Network Configuration (NIC Speed)
+SMBv1 Status (Sicherheit)|SMBv1 Status (Security)
+Event Logs (7 Tage)|Event Logs (7 days)
+Firewall-Regeln & Ports|Firewall Rules & Ports
+LDAP Konnektivität (DC)|LDAP Connectivity (DC)
+Active Directory & Schema|Active Directory & Schema
+Organisations-Konfiguration|Organization Configuration
+Datenbanken & DAG|Databases & DAG
+Zertifikate & Ablauf-Status|Certificates & Expiration Status
+RBAC-Rollen|RBAC Roles
+Transport - Speicherorte|Transport - Storage Locations
+Mailbox-Statistiken|Mailbox Statistics
+Mailbox-Quotas|Mailbox Quotas
+Adresslisten / GAL / ABP|Address Lists / GAL / ABP
+Offline-Adressbuch|Offline Address Book
+Sicherheit & Authentifizierung|Security & Authentication
+TLS/SSL Konfiguration|TLS/SSL Configuration
+Hybrid mit Exchange Online|Hybrid with Exchange Online
+Ausstehende Neustarts|Pending Reboots
+Archive Konfiguration|Archive Configuration
+Lizenzierung|Licensing
+# === Zwischenüberschriften (h3/h4) ===
+.NET Assembly Versionen (lokal)|.NET Assembly Versions (local)
+ActiveSync Organisationseinstellungen|ActiveSync Organization Settings
+AD Site Links|AD Site Links
+Adressbuchrichtlinien|Address Book Policies
+Adresslisten|Address Lists
+Aktive Komponenten (Auszug)|Active Components (excerpt)
+Aktive Postfach-Migrationen (Move Requests)|Active Mailbox Migrations (Move Requests)
+Aktive Postfach-Migrationen|Active Mailbox Migrations
+Aktuelle Domäne|Current Domain
+Aktuelle Power Plan Einstellung|Current Power Plan Setting
+Aktuelle Sicherheitsmeldungen (BSI)|Current Security Advisories (BSI)
+Aktuelles OAuth-Zertifikat (Details)|Current OAuth Certificate (details)
+Archiv-Datenbanken|Archive Databases
+Archivpostfächer|Archive Mailboxes
+Audit Logging Konfiguration|Audit Logging Configuration
+Ausgewählte Exchange Server|Selected Exchange Servers
+Auth Config (OAuth-Zertifikate)|Auth Config (OAuth certificates)
+Auth Server (OAuth-Konfiguration)|Auth Server (OAuth configuration)
+AutoReseed-Pfade|AutoReseed Paths
+Best Practice Empfehlungen (Microsoft Exchange)|Best Practice Recommendations (Microsoft Exchange)
+Best Practice Empfehlungen|Best Practice Recommendations
+Betriebssystem|Operating System
+CAL-Planung (Client Access Licenses)|CAL Planning (Client Access Licenses)
+Calendar Processing Standard-Konfiguration|Calendar Processing Default Configuration
+Cipher Suites Konfiguration|Cipher Suites Configuration
+Component State Zusammenfassung|Component State Summary
+Content Filter (Anti-Spam) Konfiguration|Content Filter (Anti-Spam) Configuration
+Credential Guard Konfiguration|Credential Guard Configuration
+DAG Informationen|DAG Information
+DAG Konfiguration|DAG Configuration
+DAG Netzwerke|DAG Networks
+Datenbank-Kopien Status|Database Copy Status
+Datenbank-Quotas (Standard-Limits)|Database Quotas (default limits)
+Datenbanken und Kopien|Databases and Copies
+Datenbankkopie-Status (DAG)|Database Copy Status (DAG)
+DKIM DNS-Records je akzeptierter Domäne|DKIM DNS Records per Accepted Domain
+DLP-Richtlinien (Data Loss Prevention)|DLP Policies (Data Loss Prevention)
+DLP-Richtlinien|DLP Policies
+DNS-Prüfung (SPF, DMARC, Autodiscover)|DNS Check (SPF, DMARC, Autodiscover)
+Domänen-FSMO-Rollen|Domain FSMO Roles
+Domänencontroller|Domain Controllers
+Empfänger-Übersicht|Recipient Overview
+Empfehlung DKIM/DMARC/SPF|Recommendation DKIM/DMARC/SPF
+Erweiterte Administratoren-Liste (ADSI)|Extended Administrator List (ADSI)
+Exchange & Proxy|Exchange & Proxy
+Exchange Anti-Malware Status|Exchange Anti-Malware Status
+Exchange Dienste|Exchange Services
+Exchange Organisation|Exchange Organization
+Exchange Server Details (Management Shell)|Exchange Server Details (Management Shell)
+Exchange Server Editionen & Datenbank-Limits|Exchange Server Editions & Database Limits
+Exchange Version (Registry)|Exchange Version (registry)
+Exchange Zertifikate|Exchange Certificates
+Exchange-relevante eingehende Allow-Regeln (max. 60)|Exchange-relevant inbound allow rules (max. 60)
+Exchange-relevante eingehende Allow-Regeln|Exchange-relevant inbound allow rules
+Festplatten-Auslastung|Disk Utilization
+Gesamtstruktur-FSMO-Rollen|Forest FSMO Roles
+Gesamtstruktur|Forest
+Globale Adressliste (GAL)|Global Address List (GAL)
+Hinweis zu Federation|Note on Federation
+HTTP Proxy Status|HTTP Proxy Status
+Hybrid Receive Connectors (von Exchange Online)|Hybrid Receive Connectors (from Exchange Online)
+Hybrid Send Connectors (Richtung Exchange Online)|Hybrid Send Connectors (towards Exchange Online)
+Hybrid-Konfiguration (Übersicht)|Hybrid Configuration (overview)
+IIS SSL-Einstellungen (Certificate Mapping)|IIS SSL Settings (certificate mapping)
+Inaktive Komponenten|Inactive Components
+Individuelle Quota-Overrides|Individual Quota Overrides
+Installierte Antiviren-/Security-Software (Registry)|Installed Antivirus/Security Software (registry)
+Installierte Transport-Agents|Installed Transport Agents
+Installierte Visual C++ Redistributables|Installed Visual C++ Redistributables
+Installierte Windows Features (DISM)|Installed Windows Features (DISM)
+Installierte Windows Server Rollen|Installed Windows Server Roles
+Intra-Organization Connectors (OAuth/Free-Busy)|Intra-Organization Connectors (OAuth/free-busy)
+IP Block List Konfiguration|IP Block List Configuration
+Konfigurierte Ausschlüsse|Configured Exclusions
+Litigation Hold|Litigation Hold
+Logische Laufwerke|Logical Drives
+Mailbox-Datenbanken|Mailbox Databases
+Mailboxen pro Datenbank|Mailboxes per Database
+MAPI Virtual Directory|MAPI Virtual Directory
+MAPI-Architektur (Organisation)|MAPI Architecture (organization)
+Message-Tracking-Logs|Message Tracking Logs
+Microsoft Defender Status (lokal)|Microsoft Defender Status (local)
+Microsoft Entra Connect (AAD Connect) - Hinweis|Microsoft Entra Connect (AAD Connect) - note
+Mitglieder der lokalen Administratoren-Gruppe|Members of the Local Administrators Group
+Mobile Geräte nach Typ (max. 100)|Mobile Devices by Type (max. 100)
+Moderne Authentifizierung (OAuth)|Modern Authentication (OAuth)
+Netzwerkadapter|Network Adapters
+Netzwerkkonfiguration|Network Configuration
+OAuth 2.0 Client Profile (Modern Auth)|OAuth 2.0 Client Profile (modern auth)
+Organisations-Level Limits (TransportConfig)|Organization Level Limits (TransportConfig)
+Organization Relationships (Frei/Gebucht-Freigabe)|Organization Relationships (free/busy sharing)
+Physische Festplatten|Physical Disks
+Postfach-Individuelle Limits (Top 50)|Mailbox-Specific Limits (top 50)
+Postfächer mit aktiviertem Archiv|Mailboxes with Archive Enabled
+Postfächer mit individuellen Quota-Overrides (max. 100)|Mailboxes with Individual Quota Overrides (max. 100)
+PowerShell Remoting TLS-Einstellungen|PowerShell Remoting TLS Settings
+Prozessor Details|Processor Details
+Prozessor-Übersicht|Processor Overview
+Prozessor(en)|Processor(s)
+Public Folder Statistiken (max. 100)|Public Folder Statistics (max. 100)
+Public Folder Struktur (max. 100)|Public Folder Structure (max. 100)
+Public Folder Mailboxen|Public Folder Mailboxes
+Queue-Datenbank und Queue-Logs|Queue Database and Queue Logs
+RAM Anforderungen|RAM Requirements
+Raumpostfächer (Room Mailboxes)|Room Mailboxes
+Raumpostfächer|Room Mailboxes
+Receive Connectors - TLS Konfiguration|Receive Connectors - TLS Configuration
+Receive Connectors mit Relay-Berechtigung|Receive Connectors with Relay Permission
+Referenz: Benötigte Exchange-Ports (Firewall-Freigaben)|Reference: Required Exchange Ports (firewall rules)
+Remote Mailboxes (in Exchange Online)|Remote Mailboxes (in Exchange Online)
+Ressourcenpostfächer (Equipment Mailboxes)|Equipment Mailboxes
+Ressourcenpostfächer|Equipment Mailboxes
+Safety-Net Konfiguration|Safety Net Configuration
+Schema-Version|Schema Version
+Send Connectors - TLS Konfiguration|Send Connectors - TLS Configuration
+Sender Filter Konfiguration|Sender Filter Configuration
+Sicherheitshinweis SMTP-Relay|Security Note on SMTP Relay
+SMBv1 Konfiguration|SMBv1 Configuration
+SMTP-Authentifizierung je Receive Connector|SMTP Authentication per Receive Connector
+SMTP-Protokolllogs (Sende- und Empfangsconnectoren)|SMTP Protocol Logs (send and receive connectors)
+SMTP-Relay Connectors|SMTP Relay Connectors
+Spare / Recovery-Datenbanken|Spare / Recovery Databases
+Standard-Speicherorte für Transportkomponenten|Default Storage Locations for Transport Components
+System-Übersicht|System Overview
+System.Data.dll Pfad|System.Data.dll path
+TLS-Versionen (Windows Registry)|TLS Versions (Windows registry)
+TLS/SSL Sicherheitsbewertung|TLS/SSL Security Rating
+Transport TLS-Konfiguration|Transport TLS Configuration
+Transport-Konfiguration|Transport Configuration
+Transport-Warteschlangen|Transport Queues
+Virtualization Based Security Details|Virtualization Based Security Details
+Weiterführende Ressourcen|Further Resources
+Windows Hotfixes (letzte 30)|Windows Hotfixes (last 30)
+Windows Security Center - Erkannte Antivirenprodukte|Windows Security Center - Detected Antivirus Products
+Windows-Lizenz|Windows License
+WinHTTP / Internet Settings Registry|WinHTTP / Internet Settings registry
+WinHTTP Proxy (netsh)|WinHTTP Proxy (netsh)
+Zertifikate (TLS/SSL)|Certificates (TLS/SSL)
+Fehlende empfohlene Ausschlüsse|Missing recommended exclusions
+Firewall-Profile|Firewall Profiles
+TLS/SSL Konfiguration|TLS/SSL Configuration
+letzte 7 Tage, max. 50 Fehler/Warnungen|last 7 days, max. 50 errors/warnings
+aktive Postfächer|active mailboxes
+Edition|Edition
+# === Tabellenspalten ===
+Action bei Erkennung|Action on Detection
+AD Schema Version (objectVersion)|AD Schema Version (objectVersion)
+Adapter-Name|Adapter Name
+Admin Audit Log aktiviert|Admin Audit Log Enabled
+Admin Benachrichtigung|Admin Notification
+Anzeigename|Display Name
+Anzeige Name|Display Name
+Anzahl Datenbanken|Number of Databases
+Anzahl Remote Mailboxes|Number of Remote Mailboxes
+Anzahl|Count
+Architektur|Architecture
+Archiv-Größe (GB)|Archive Size (GB)
+Archiv-Datenbank|Archive Database
+Archiv-Items|Archive Items
+Archiv-Quota (GB)|Archive Quota (GB)
+Archiv-Status|Archive Status
+Archiv-Warnung (GB)|Archive Warning (GB)
+Aufbewahrungsdauer (Tage)|Retention Period (days)
+Ausgehend Standard|Outbound Default
+Auslastung (%)|Utilization (%)
+Auth Mechanismen|Auth Mechanisms
+Automatische Buchung|Automatic Booking
+Begründung|Rationale
+Benutzer-Postfächer (CAL-relevant)|User Mailboxes (CAL relevant)
+Beschreibung|Description
+Bewertung|Rating
+Buchungsgenehmigung|Booking Approval
+Dateisystem|File System
+Datenbankdatei|Database File
+Datenbankname|Database Name
+Datenbank|Database
+Datum|Date
+DB-Limit (Edition)|DB Limit (edition)
+Definition aktuell|Definition Current
+Dienstname|Service Name
+Dienste|Services
+Domänenfunktionsebene|Domain Functional Level
+Domänenname|Domain Name
+Domäne|Domain
+Domains mit sicherer TLS|Domains with Secure TLS
+Echtzeitschutz|Real-Time Protection
+Eingehend Standard|Inbound Default
+Empfänger|Recipients
+Empfohlener Status|Recommended Status
+Empfohlener Wert|Recommended Value
+Empfohlen|Recommended
+Empfehlung|Recommendation
+Engine Pfad|Engine Path
+Erkennungsmethode|Detection Method
+Erstellt|Created
+Exchange Schema Beschreibung|Exchange Schema Description
+Exchange Schema Version (rangeUpper)|Exchange Schema Version (rangeUpper)
+Fingerabdruck|Thumbprint
+FIP-FS Pfad|FIP-FS Path
+Frei (%)|Free (%)
+Frei (GB)|Free (GB)
+Frei_GB|Free_GB
+Gesamt (GB)|Total (GB)
+Gesamt Komponenten|Total Components
+Gesamt Logische Prozesse|Total Logical Processors
+Gesamt Physische Kerne|Total Physical Cores
+Gesamt_GB|Total_GB
+Gesamtstruktur-Domänen|Forest Domains
+Gesamtstrukturfunktionsebene|Forest Functional Level
+Gesamtstrukturname|Forest Name
+Geschätzter CAL-Bedarf (min.)|Estimated CAL Requirement (min.)
+Geschwindigkeit|Speed
+Geräte-Postfächer (keine CAL)|Equipment Mailboxes (no CAL)
+Gesperrte Dateitypen|Blocked File Types
+Größe_GB|Size_GB
+Grund|Reason
+Gruppe|Group
+Hersteller|Manufacturer
+Hybrid-Domains|Hybrid Domains
+InitGröße_MB|InitSize_MB
+Installationsdatum|Installation Date
+Installationspfad|Installation Path
+InstallDatum|InstallDate
+InstalliertAm|InstalledOn
+InstalliertVon|InstalledBy
+Installierte RAM (GB)|Installed RAM (GB)
+InterfaceTyp|InterfaceType
+IPAdresse|IPAddress
+Kerne|Cores
+Komponente|Component
+Kritisch|Critical
+Laufwerk|Drive
+LetzterBoot|LastBoot
+Limit-Warnung|Limit Warning
+Limit-Typ|Limit Type
+Logische Proz.|Logical Proc.
+Logische Prozesse|Logical Processors
+Lokaler Port|Local Port
+MAC-Adresse|MAC Address
+Mailbox Audit Log aktiviert|Mailbox Audit Log Enabled
+Mailboxen|Mailboxes
+MAPI über HTTP|MAPI over HTTP
+Max Takt (MHz)|Max Clock (MHz)
+Max. Dauer (Tage)|Max. Duration (days)
+MaxGröße_MB|MaxSize_MB
+Maximale Größe (GB)|Maximum Size (GB)
+Message-Tracking-Log Pfad|Message Tracking Log Path
+Minimum erforderlich|Minimum Required
+Mitglied (ADSI)|Member (ADSI)
+Mitglieder|Members
+Mitglied|Member
+Modell|Model
+Nachrichten|Messages
+Nächster Versuch|Next Attempt
+NetBIOS-Name|NetBIOS Name
+Nicht nach|Not After
+Nur ab/bis|Only from/to
+Partitionen|Partitions
+Pfad|Path
+Physische Kerne|Physical Cores
+Priorität|Priority
+Profil|Profile
+Protokoll|Protocol
+Provisioning gesperrt|Provisioning Blocked
+Prozessor|Processor
+Public Key Länge|Public Key Length
+Quelle|Source
+Queue-Datenbank Größe|Queue Database Size
+Queue-Datenbank Pfad|Queue Database Path
+Queue-Logs Pfad|Queue Logs Path
+RAM_Belegt_%|RAM_Used_%
+RAM_Frei_GB|RAM_Free_GB
+RAM_Gesamt_GB|RAM_Total_GB
+Raum-Postfächer (keine CAL)|Room Mailboxes (no CAL)
+Raumkapazität|Room Capacity
+Record (gekürzt)|Record (truncated)
+Regel|Rule
+Registry Pfad|Registry Path
+Rollen|Roles
+Root-Domäne|Root Domain
+Shared Mailboxes (keine CAL)|Shared Mailboxes (no CAL)
+Sicherheitsbewertung|Security Rating
+SMTP-Log Pfad|SMTP Log Path
+Sockel|Sockets
+Softwarename|Software Name
+Speed-Status|Speed Status
+Standardpfad|Default Path
+Starttyp|Start Type
+Subnetz|Subnet
+Tage bis Ablauf|Days Until Expiration
+Teil-Produktkey|Partial Product Key
+TLS erforderlich|TLS Required
+TLS Empfang Domain Secure List|TLS Receive Domain Secure List
+TLS Sende Domain Secure List|TLS Send Domain Secure List
+TLS Zertifikat Name|TLS Certificate Name
+TLS Zertifikat|TLS Certificate
+Typ|Type
+UPN-Suffixe|UPN Suffixes
+Verfügbarer Platz|Available Space
+Version Registry|Version Registry
+Virtuell|Virtual
+Volumenname|Volume Name
+Volumepfad|Volume Path
+Warnung|Warning
+Wert|Value
+ZAP aktiviert|ZAP Enabled
+Zertifikatstyp|Certificate Type
+Zulässige Buchungen|Allowed Bookings
+Belegt_%|Used_%
+Log-Level|Log Level
+Selektor|Selector
+Titel|Title
+DKIM-relevant|DKIM relevant
+Lizenz-Status|License Status
+Antivirenprodukt|Antivirus Product
+Aktiver Power Plan|Active Power Plan
+Credential Guard Status|Credential Guard Status
+LDAP Verbindung|LDAP Connection
+Legacy MAPI|Legacy MAPI
+Maintenance Mode|Maintenance Mode
+Org Prerequisit|Org Prerequisite
+Outlook-Versionen|Outlook Versions
+SMTP Auth Deaktiviert|SMTP Auth Disabled
+# === Statuswerte & Meldungen ===
+Nicht aktiviert/unbekannt|Not enabled/unknown
+Nicht empfohlen|Not recommended
+Nicht verfügbar|Not available
+Status konnte nicht eindeutig ermittelt werden|Status could not be determined reliably
+WARNUNG - Sollte 'Höchste Leistung' sein|WARNING - should be 'High Performance'
+WARNUNG (< 1 Gbps!)|WARNING (< 1 Gbps!)
+WARNUNG (< 4 Kerne!)|WARNING (< 4 cores!)
+WARNUNG (< 30 Tage)|WARNING (< 30 days)
+WARNUNG (< 30%)|WARNING (< 30%)
+WARNUNG|WARNING
+Aktiviert - Mit UEFI-Sperre|Enabled - with UEFI lock
+Aktiviert - Ohne UEFI-Sperre|Enabled - without UEFI lock
+Aktiviert - UEFI-Sperre aktiv|Enabled - UEFI lock active
+Aktiviert - Pfad systemabhängig|Enabled - path depends on system
+Aktiviert (lizenziert)|Enabled (licensed)
+Aktiviert (Überwachen)|Active (auditing)
+Aktiviert|Enabled
+Aktiv (Überwachen)|Active (auditing)
+Deaktiviert|Disabled
+DEAKTIVIERT (Sicher)|DISABLED (secure)
+AKTIVIERT (Unsicher!)|ENABLED (insecure!)
+JA (AKTIVIERT)|YES (ENABLED)
+NEIN (deaktiviert)|NO (disabled)
+JA (vermutlich)|YES (probably)
+Ja (sicher)|Yes (secure)
+Nein (Auth aktiv)|No (auth active)
+Kein Neustart erforderlich|No reboot required
+Läuft bald ab!|Expiring soon!
+Läuft|Running
+OK - Erforderlich und aktiv|OK - required and active
+OK - Höchste Leistung|OK - High Performance
+OK (Minimum erfüllt, aber nicht optimal)|OK (minimum met, but not optimal)
+SEHR GUT - Deaktiviert|VERY GOOD - disabled
+SEHR GUT (wahrscheinlich nicht aktiviert)|VERY GOOD (probably not enabled)
+SCHWACH (Kritische Mängel)|WEAK (critical deficiencies)
+Nicht konfiguriert / Deaktiviert|Not configured / disabled
+Nicht unterstützt (nur via HTTP)|Not supported (HTTP only)
+FEHLER - AD nicht erreichbar|ERROR - AD not reachable
+KRITISCH - Muss aktiviert sein (Exchange Anforderung)!|CRITICAL - must be enabled (Exchange requirement)!
+KRITISCH - Muss deaktiviert sein!|CRITICAL - must be disabled!
+Nicht aktiv|Not active
+Proxy aktiviert|Proxy enabled
+Warnung - TLS sollte erzwungen sein|Warning - TLS should be enforced
+Nicht aktiviert (optional)|Not enabled (optional)
+Nicht vorhanden oder Moderne Windows-Version|Not present or modern Windows version
+Standard (Keine Recycling)|Default (no recycling)
+Nicht erkannt|Not detected
+Nicht erreichbar|Not reachable
+Nicht gefunden|Not found
+Nicht gesetzt|Not set
+Nicht konfiguriert|Not configured
+Keine Mitglieder|No members
+Keine|None
+Höchste Leistung|High Performance
+Aktiv|Active
+Inaktiv|Inactive
+Ja|Yes
+Nein|No
+FEHLER|ERROR
+# === Hinweistexte / Meldungen ===
+Keine Daten verfügbar.|No data available.
+Keine Netzwerkadapter abrufbar.|No network adapters could be retrieved.
+Keine Netzwerkadapter gefunden.|No network adapters found.
+Keine Verbindung möglich (weder WsMan noch DCOM). Bitte Netzwerk/Firewall prüfen.|No connection possible (neither WsMan nor DCOM). Please check network/firewall.
+Keine Verbindung möglich. Firewall-Regeln nicht abrufbar.|No connection possible. Firewall rules cannot be retrieved.
+Keine Verbindung zur Remote Registry möglich.|No connection to the remote registry possible.
+Administratoren-Gruppe konnte nicht gefunden werden.|Administrators group could not be found.
+Mögliche Ursachen: FIP-FS nicht installiert, Anti-Malware deaktiviert, oder Berechtigungen unzureichend.|Possible causes: FIP-FS not installed, anti-malware disabled, or insufficient permissions.
+Active Directory PowerShell-Modul nicht verfügbar. Domain Trusts können nicht abgefragt werden.|Active Directory PowerShell module not available. Domain trusts cannot be queried.
+Alle Postfächer verwenden Datenbank-Standardwerte.|All mailboxes use database default values.
+Anti-Spam/Anti-Malware Agents sind möglicherweise nicht auf Mailbox-Servern aktiviert. Prüfen Sie Edge Transport Server.|Anti-spam/anti-malware agents may not be enabled on mailbox servers. Please check Edge Transport servers.
+AutoReseed ist auf diesem Server nicht konfiguriert (keine AutoDag-Pfade, keine Spare-Datenbanken).|AutoReseed is not configured on this server (no AutoDag paths, no spare databases).
+BSI RSS-Feed aktuell nicht erreichbar.|BSI RSS feed currently not reachable.
+Cipher Suites konnten nicht ausgelesen werden (kein Zugriff auf Get-TlsCipherSuite).|Cipher suites could not be read (no access to Get-TlsCipherSuite).
+Content Filter Config nicht verfügbar (nur auf Edge Transport / Hub mit aktiviertem Agent).|Content filter config not available (only on Edge Transport / Hub with the agent enabled).
+Detaillierte Firewall-Regeln nicht abrufbar (benötigt WinRM für CIMv2-Namespace).|Detailed firewall rules not available (requires WinRM for the CIMv2 namespace).
+Disk Space Information nicht verfügbar.|Disk space information not available.
+Feature-Informationen nicht verfügbar (CIM/DISM).|Feature information not available (CIM/DISM).
+FIP-FS Scan Engine nicht gefunden.|FIP-FS scan engine not found.
+Kein Federation Trust konfiguriert.|No federation trust configured.
+Keine aktiven Move Requests vorhanden.|No active move requests present.
+Keine aktuellen Sicherheitsmeldungen für Microsoft-Produkte im BSI RSS-Feed gefunden.|No current security advisories for Microsoft products found in the BSI RSS feed.
+Keine Antivirenprodukte via SecurityCenter gefunden (möglicherweise kein SecurityCenter oder AV nicht registriert).|No antivirus products found via Security Center (possibly no Security Center or AV not registered).
+Keine App Pools gefunden oder IIS nicht konfiguriert.|No app pools found or IIS not configured.
+Keine Auth Server konfiguriert.|No auth servers configured.
+Keine Database Availability Groups in dieser Organisation konfiguriert.|No Database Availability Groups configured in this organization.
+Keine DLP-Richtlinien konfiguriert.|No DLP policies configured.
+Keine Domain Trusts vorhanden (oder Zugriff verweigert).|No domain trusts present (or access denied).
+Keine Exchange Zertifikate gefunden.|No Exchange certificates found.
+Keine Exchange-bezogenen Firewall-Regeln gefunden.|No Exchange-related firewall rules found.
+Keine expliziten Relay-Connectors gefunden.|No explicit relay connectors found.
+Keine Feature-Informationen verfügbar.|No feature information available.
+Keine Hybrid-Konfiguration gefunden. Die Umgebung ist nicht hybrid konfiguriert.|No hybrid configuration found. The environment is not configured as hybrid.
+Keine Hybrid-Konfiguration vorhanden oder Cmdlet nicht verfügbar. Umgebung ist möglicherweise nicht hybrid.|No hybrid configuration present or cmdlet not available. The environment may not be hybrid.
+Keine IP Block List Einträge.|No IP block list entries.
+Keine Mailbox-Datenbanken auf den ausgewählten Servern gefunden.|No mailbox databases found on the selected servers.
+Keine Mitglieder gefunden (oder Zugriff verweigert).|No members found (or access denied).
+Keine Organization Relationships konfiguriert.|No organization relationships configured.
+Keine Partner Applications konfiguriert.|No partner applications configured.
+Keine Postfächer mit aktiviertem Archiv gefunden.|No mailboxes with an enabled archive found.
+Keine Postfächer unter Litigation Hold.|No mailboxes under litigation hold.
+Keine Proxy-Konfiguration in Registry gefunden.|No proxy configuration found in the registry.
+Keine Prozessor-Informationen verfügbar.|No processor information available.
+Keine Raumpostfächer vorhanden.|No room mailboxes present.
+Keine Ressourcenpostfächer vorhanden.|No equipment mailboxes present.
+Keine Software gefunden.|No software found.
+Keine Software gefunden|No software found
+Keine Transport-Warteschlangen gefunden oder Transportdienst nicht verfügbar.|No transport queues found or transport service not available.
+Keine Visual C++ Redistributables gefunden (via Registry).|No Visual C++ redistributables found (via registry).
+Malware Filter Policies nicht verfügbar.|Malware filter policies not available.
+Profile nicht abrufbar (Get-NetFirewallProfile benötigt WinRM/CIM v2).|Profiles not retrievable (Get-NetFirewallProfile requires WinRM/CIM v2).
+VC++ Redistributables konnten nicht abgerufen werden.|VC++ redistributables could not be retrieved.
+Kein CPU Throttling festgestellt.|No CPU throttling detected.
+Keine aktiven Setting Overrides gefunden.|No active setting overrides found.
+Keine Antivirus-Ausschlüsse konfiguriert oder Windows Defender nicht verfügbar.|No antivirus exclusions configured or Windows Defender not available.
+DLP Cmdlet nicht verfügbar.|DLP cmdlet not available.
+Keine Accepted Domains konfiguriert.|No accepted domains configured.
+Keine Adresslisten konfiguriert.|No address lists configured.
+Keine akzeptierten Domänen gefunden|No accepted domains found
+Keine benutzerdefinierten Throttling Policies.|No custom throttling policies.
+Keine CIM-Session verfügbar.|No CIM session available.
+Keine DAG(s) in der Organisation konfiguriert|No DAG(s) configured in the organization
+Keine DNS-Ergebnisse.|No DNS results.
+Keine E-Mail-Adressrichtlinien konfiguriert.|No email address policies configured.
+Keine Empfangsconnectoren konfiguriert.|No receive connectors configured.
+Keine GAL gefunden.|No GAL found.
+Keine Journal Rules.|No journal rules.
+Keine kritischen Events - sehr gut!|No critical events - excellent!
+Keine Message-Tracking-Informationen verfügbar.|No message tracking information available.
+Keine MX-Records ermittelt.|No MX records determined.
+Keine OABs konfiguriert.|No OABs configured.
+Keine Policies konfiguriert.|No policies configured.
+Keine Public Folder Mailboxen vorhanden.|No public folder mailboxes present.
+Keine Public Folder vorhanden.|No public folders present.
+Keine Queue-Informationen verfügbar.|No queue information available.
+Keine relevanten Regeln gefunden|No relevant rules found
+Keine Remote Domains konfiguriert.|No remote domains configured.
+Keine Retention Policies.|No retention policies.
+Keine Retention Tags.|No retention tags.
+Keine Rollengruppen gefunden.|No role groups found.
+Keine Safety-Net-Informationen verfügbar.|No safety net information available.
+Keine Sendeconnectoren konfiguriert.|No send connectors configured.
+Keine SMTP-Log-Informationen verfügbar.|No SMTP log information available.
+Keine spezifische Empfehlung (1 Gbit/s)|No specific recommendation (1 Gbit/s)
+Keine Standard-Pfade verfügbar.|No default paths available.
+Keine Statistiken verfügbar.|No statistics available.
+Keine Transport-Regeln konfiguriert.|No transport rules configured.
+Keine Zertifikate gefunden.|No certificates found.
+Keine Hochgeschwindigkeits-Netzwerkadapter gefunden.|No high-speed network adapters found.
+Keine DAG-Mitglieder gefunden – AutoReseed ist nur in DAG-Umgebungen relevant.|No DAG members found - AutoReseed is only relevant in DAG environments.
+Keine Datenbankkopien gefunden – Datenbanken haben nur eine einzelne Kopie (keine DAG-Replikation).|No database copies found - databases only have a single copy (no DAG replication).
+Kein Exchange Server gefunden|No Exchange server found
+Kein MX-Record gefunden|No MX record found
+Kein Proxy-Server konfiguriert|No proxy server configured
+Keine Mitgliedschaften|No memberships
+CPU Throttling erkannt! Die aktuelle Taktrate ist geringer als die maximale Taktrate.|CPU throttling detected! The current clock rate is lower than the maximum clock rate.
+Es gibt Warteschlangen mit Problemen (Retry/Suspended)! Bitte prüfen.|There are queues with problems (retry/suspended)! Please check.
+Es sind ausstehende Neustarts auf diesem Server vorhanden! Bitte zeitnah durchführen.|Pending reboots exist on this server! Please perform them promptly.
+OAuth 2.0 ist nicht aktiviert! Dies ist für moderne Clients (Outlook 2016+, Mobile) und Hybrid-Szenarien erforderlich.|OAuth 2.0 is not enabled! This is required for modern clients (Outlook 2016+, mobile) and hybrid scenarios.
+OAuth ist NICHT aktiviert. Empfohlen für Hybrid und Sicherheit!|OAuth is NOT enabled. Recommended for hybrid and security!
+Mögliche Ursachen: ÜBerhitzung, Power Management, VM-Ressourcen-Limit.|Possible causes: overheating, power management, VM resource limit.
+Diese Connectors erlauben anonymes oder Applikations-Relay. Prüfen Sie die Remote IP Ranges!|These connectors allow anonymous or application relay. Please review the remote IP ranges!
+Diese Postfächer verwenden NICHT die Datenbank-Standardwerte.|These mailboxes do NOT use the database default values.
+Ein HTTP-Proxy kann Exchange-Funktionen beeinträchtigen:|An HTTP proxy can impair Exchange functionality:
+Die CalendarProcessing-Einstellungen steuern, wie Raum-/Ressourcenpostfächer Buchungen verarbeiten:|The CalendarProcessing settings control how room/equipment mailboxes handle bookings:
+Federation wird für folgende Szenarien benötigt:|Federation is required for the following scenarios:
+Nur Postfächer mit abweichenden Limits (nicht Organisations-Standard)|Only mailboxes with deviating limits (not organization default)
+Partner Applications ermöglichen OAuth-Authentifizierung zwischen Exchange und anderen Diensten.|Partner applications enable OAuth authentication between Exchange and other services.
+Frei/Gebucht-Informationen mit externen Organisationen teilen|Share free/busy information with external organizations
+Hybrid-Konfiguration mit Exchange Online (OAuth)|Hybrid configuration with Exchange Online (OAuth)
+Hybridkonfiguration mit Exchange Online|Hybrid configuration with Exchange Online
+Kalender-Freigabe mit anderen Exchange-Organisationen|Calendar sharing with other Exchange organizations
+Keine Mitigationen aktiv|No mitigations active
+Alle Exchange-Bin-, Logging- und Datenbank-Pfade sollten von AV-Scanning ausgenommen sein.|All Exchange bin, logging and database paths should be excluded from AV scanning.
+Exchange empfiehlt mindestens 30% freien Speicher auf DB- und Log-Laufwerken.|Exchange recommends at least 30% free space on database and log drives.
+Exchange 2019 benötigt mindestens 64GB RAM. 128GB werden empfohlen.|Exchange 2019 requires at least 64 GB RAM. 128 GB is recommended.
+Exchange benötigt aktive LDAP-Verbindung zu Active Directory (LDAP Port 389/636). Ohne AD funktioniert Exchange nicht.|Exchange requires an active LDAP connection to Active Directory (LDAP port 389/636). Exchange does not work without AD.
+Exchange SE empfiehlt mindestens 128GB RAM für optimale Performance. 256GB sind recommended.|Exchange SE recommends at least 128 GB RAM for optimal performance. 256 GB is recommended.
+Für Produktions-Exchange-Server sollte der Power Plan auf 'Höchste Leistung' oder 'High Performance' eingestellt sein.|For production Exchange servers the power plan should be set to 'High Performance'.
+MAPI/HTTP ist die modern Outlook-Verbindungsmethode. RPC-over-HTTP ist veraltet und wird nicht mehr empfohlen.|MAPI/HTTP is the modern Outlook connection method. RPC over HTTP is deprecated and no longer recommended.
+RPC Port 135 (TCP/UDP) wird für Exchange-Verwaltung und Cluster-Kommunikation benötigt. Service muss laufen.|RPC port 135 (TCP/UDP) is required for Exchange management and cluster communication. The service must be running.
+Zertifikate sollten rechtzeitig erneuert werden. Ein Ablauf führt zu Service-Unterbrechungen!|Certificates should be renewed in good time. Expiration leads to service outages!
+Exchange empfiehlt mindestens 4 physische Kerne für optimale Performance.|Exchange recommends at least 4 physical cores for optimal performance.
+Enthält die Transportdatenbank mit ausstehenden Nachrichten|Contains the transport database with pending messages
+Protokolliert alle Transportereignisse für Audit und Compliance|Logs all transport events for auditing and compliance
+ERFORDERLICH. Mindeststandard für alle Verbindungen.|REQUIRED. Minimum standard for all connections.
+Edge/Hub Transport (umgebungsabhängig)|Edge/Hub Transport (depends on environment)
+IMAP4 / IMAP4 über SSL (falls aktiviert)|IMAP4 / IMAP4 over SSL (if enabled)
+POP3 / POP3 über SSL (falls aktiviert)|POP3 / POP3 over SSL (if enabled)
+LDAP / LDAPS (Domänencontroller)|LDAP / LDAPS (domain controllers)
+Outlook 2016+ oder Outlook für Mac 2016+|Outlook 2016+ or Outlook for Mac 2016+
+Nicht empfohlene Suites können die Sicherheit beeinträchtigen oder Kompatibilitätsprobleme verursachen.|Non-recommended suites can impair security or cause compatibility issues.
+2048 empfohlen für 10 Gbit/s|2048 recommended for 10 Gbit/s
+4096 empfohlen für 25 Gbit/s|4096 recommended for 25 Gbit/s
+4096 empfohlen für 40 Gbit/s|4096 recommended for 40 Gbit/s
+Registry-Info (ScanEngine.ini nicht zugänglich)|Registry info (ScanEngine.ini not accessible)
+FIP-FS / ScanEngine.ini nicht gefunden|FIP-FS / ScanEngine.ini not found
+Get-MailboxServer nicht möglich|Get-MailboxServer not possible
+MS Learn nicht erreichbar|MS Learn not reachable
+RSS-Feed nicht erreichbar.|RSS feed not reachable.
+Ausgabeverzeichnis wählen|Choose output directory
+# === Log-Meldungen ===
+=== Prüfe aktuelle Security CVEs (BSI RSS-Feed) ===|=== Checking current security CVEs (BSI RSS feed) ===
+=== Prüfe auf ausstehende Neustarts ===|=== Checking for pending reboots ===
+=== Prüfe AutoReseed-Konfiguration ===|=== Checking AutoReseed configuration ===
+=== Prüfe CPU Throttling ===|=== Checking CPU throttling ===
+=== Prüfe Credential Guard Status ===|=== Checking Credential Guard status ===
+=== Prüfe Exchange Build-Versionen online (MS Learn) ===|=== Checking Exchange build versions online (MS Learn) ===
+=== Prüfe Exchange Server Component States ===|=== Checking Exchange server component states ===
+=== Sammle Datenbank- und DAG-Informationen ===|=== Collecting database and DAG information ===
+=== Sammle Domain Trusts & Verschlüsselung ===|=== Collecting domain trusts & encryption ===
+=== Sammle Exchange Server Übersicht ===|=== Collecting Exchange server overview ===
+=== Sammle installierte Antivirenlösungen ===|=== Collecting installed antivirus solutions ===
+Online-Check für Exchange Builds abgeschlossen.|Online check for Exchange builds completed.
+Exchange Management Shell über RemoteExchange.ps1 geladen.|Exchange Management Shell loaded via RemoteExchange.ps1.
+Exchange Management Tools nicht gefunden. Bitte auf einem Exchange-Server ausführen.|Exchange Management Tools not found. Please run on an Exchange server.
+CIM-Association lieferte keine Mitglieder, versuche Invoke-Command...|CIM association returned no members, trying Invoke-Command...
+Fehler bei HTML-Tabellen-Konvertierung|Error during HTML table conversion
+Fehler bei der Datenkonvertierung|Error during data conversion
+Fehler beim Abrufen von|Error while retrieving
+Fehler beim Abrufen der|Error while retrieving the
+Fehler beim Sammeln von|Error while collecting
+Fehler bei|Error during
+Fehler für|Error for
+Fehler|Error
+Warnungen|Warnings
+Sammle|Collecting
+Prüfe|Checking
+Konnte keine Verbindung zu|Could not connect to
+konnte nicht abgerufen werden|could not be retrieved
+nicht verfügbar|not available
+nicht gefunden|not found
+nicht erreichbar|not reachable
+nicht konfiguriert|not configured
+Hinweis|Note
+Best Practice|Best Practice
+Empfehlung|Recommendation
+Server|Server
+# === Weitere Log-Meldungen ===
+=== Ermittle Exchange Edition ===|=== Determining Exchange edition ===
+=== Exchange Management Tools werden geladen ===|=== Loading Exchange Management Tools ===
+=== Sammle .NET Framework Informationen ===|=== Collecting .NET Framework information ===
+=== Sammle Accepted Domains ===|=== Collecting accepted domains ===
+=== Sammle AD-Informationen ===|=== Collecting AD information ===
+=== Sammle Adresslisten ===|=== Collecting address lists ===
+=== Sammle Anti-Spam/Anti-Malware Konfiguration ===|=== Collecting anti-spam/anti-malware configuration ===
+=== Sammle Antivirus Exclusions Information ===|=== Collecting antivirus exclusions information ===
+=== Sammle Calendar & Resource Mailbox Konfiguration ===|=== Collecting calendar & resource mailbox configuration ===
+=== Sammle Certificate Expiration Information ===|=== Collecting certificate expiration information ===
+=== Sammle Compliance & DLP Informationen ===|=== Collecting compliance & DLP information ===
+=== Sammle DAG Replication Health ===|=== Collecting DAG replication health ===
+=== Sammle Database Copies Information ===|=== Collecting database copies information ===
+=== Sammle Disk Space Information ===|=== Collecting disk space information ===
+=== Sammle DKIM-Informationen ===|=== Collecting DKIM information ===
+=== Sammle E-Mail-Adressrichtlinien ===|=== Collecting email address policies ===
+=== Sammle Empfangsconnectoren ===|=== Collecting receive connectors ===
+=== Sammle Event Log Informationen (CIM) ===|=== Collecting event log information (CIM) ===
+=== Sammle Exchange Archive Konfiguration ===|=== Collecting Exchange archive configuration ===
+=== Sammle Exchange Federated Sharing ===|=== Collecting Exchange federated sharing ===
+=== Sammle Exchange Message Size Limits ===|=== Collecting Exchange message size limits ===
+=== Sammle Exchange Partner Applications ===|=== Collecting Exchange partner applications ===
+=== Sammle Exchange Service Status ===|=== Collecting Exchange service status ===
+=== Sammle Exchange Setting Overrides ===|=== Collecting Exchange setting overrides ===
+=== Sammle Exchange URLs ===|=== Collecting Exchange URLs ===
+=== Sammle FIP-FS Scan Engine Informationen ===|=== Collecting FIP-FS scan engine information ===
+=== Sammle Firewall-Informationen ===|=== Collecting firewall information ===
+=== Sammle FSMO-Rollen ===|=== Collecting FSMO roles ===
+=== Sammle Hardware-Informationen (CIM/DCOM Fallback) ===|=== Collecting hardware information (CIM/DCOM fallback) ===
+=== Sammle HTTP Proxy Konfiguration ===|=== Collecting HTTP proxy configuration ===
+=== Sammle Hybrid-Konfiguration ===|=== Collecting hybrid configuration ===
+=== Sammle IIS Application Pool Settings ===|=== Collecting IIS application pool settings ===
+=== Sammle installierte Software ===|=== Collecting installed software ===
+=== Sammle LDAP Connectivity Information ===|=== Collecting LDAP connectivity information ===
+=== Sammle Lizenzierungs-Informationen ===|=== Collecting licensing information ===
+=== Sammle lokale Administratoren ===|=== Collecting local administrators ===
+=== Sammle Mailbox-Quota Informationen ===|=== Collecting mailbox quota information ===
+=== Sammle Mailbox-Statistiken ===|=== Collecting mailbox statistics ===
+=== Sammle MAPI Connectivity Information ===|=== Collecting MAPI connectivity information ===
+=== Sammle Message Queue Informationen ===|=== Collecting message queue information ===
+=== Sammle Mobile Device Informationen ===|=== Collecting mobile device information ===
+=== Sammle MX-Record Informationen ===|=== Collecting MX record information ===
+=== Sammle Netzwerk-Konfiguration (NIC Speed) ===|=== Collecting network configuration (NIC speed) ===
+=== Sammle NIC Receive Buffer Informationen ===|=== Collecting NIC receive buffer information ===
+=== Sammle OAuth / Certificate Based Auth ===|=== Collecting OAuth / certificate based auth ===
+=== Sammle Offline-Adressbuch ===|=== Collecting offline address book ===
+=== Sammle Organisationskonfiguration ===|=== Collecting organization configuration ===
+=== Sammle Patch-Informationen (Exchange) ===|=== Collecting patch information (Exchange) ===
+=== Sammle Power Plan Informationen ===|=== Collecting power plan information ===
+=== Sammle Processor Core Information ===|=== Collecting processor core information ===
+=== Sammle Public Folder Informationen ===|=== Collecting public folder information ===
+=== Sammle RAM Requirements Information ===|=== Collecting RAM requirements information ===
+=== Sammle RBAC-Informationen ===|=== Collecting RBAC information ===
+=== Sammle Remote Domains ===|=== Collecting remote domains ===
+=== Sammle Retention Policies ===|=== Collecting retention policies ===
+=== Sammle RPC Port Status ===|=== Collecting RPC port status ===
+=== Sammle Sendeconnectoren ===|=== Collecting send connectors ===
+=== Sammle Sicherheit & Authentifizierung ===|=== Collecting security & authentication ===
+=== Sammle SMBv1 Status ===|=== Collecting SMBv1 status ===
+=== Sammle SMTP-Relay Informationen ===|=== Collecting SMTP relay information ===
+=== Sammle Throttling Policies ===|=== Collecting throttling policies ===
+=== Sammle TLS/SSL Konfiguration ===|=== Collecting TLS/SSL configuration ===
+=== Sammle Transport-Regeln ===|=== Collecting transport rules ===
+=== Sammle Transportkomponenten-Speicherorte ===|=== Collecting transport component storage locations ===
+=== Sammle Visual C++ Redistributable Versionen ===|=== Collecting Visual C++ redistributable versions ===
+=== Sammle Windows Features & Rollen ===|=== Collecting Windows features & roles ===
+=== Sammle Zertifikat-Informationen ===|=== Collecting certificate information ===
+Exchange Edition erkannt: 2013 (Version 15.0)|Exchange edition detected: 2013 (version 15.0)
+Exchange Edition erkannt: 2016 (Version 15.1)|Exchange edition detected: 2016 (version 15.1)
+Exchange Edition erkannt: 2019 (Version 15.2, Build nicht erkannt)|Exchange edition detected: 2019 (version 15.2, build not detected)
+Exchange Snap-In erfolgreich geladen.|Exchange snap-in loaded successfully.
+Exchange Snap-In ist bereits geladen.|Exchange snap-in is already loaded.
+IIS AppPool lokal aus ApplicationHost.config auslesen...|Reading IIS app pool locally from ApplicationHost.config...
+Keine Adapter gefunden|No adapters found
+PDF-Export nicht möglich (weder Word noch Edge/Chrome verfügbar).|PDF export not possible (neither Word nor Edge/Chrome available).
+Snap-In nicht direkt verfügbar. Versuche Exchange Management Shell zu laden...|Snap-in not directly available. Trying to load Exchange Management Shell...
+Version konnte nicht extrahiert werden - Fallback auf Build-Ranges|Version could not be extracted - falling back to build ranges
+Versuche Get-NetAdapter lokal...|Trying Get-NetAdapter locally...
+Win32_Group fehlgeschlagen, versuche net localgroup per Invoke-Command...|Win32_Group failed, trying net localgroup via Invoke-Command...
+'@
+
+# Interne Caches der Übersetzungs-Engine
+$script:LocMap        = $null
+$script:LocRegex      = $null
+$script:LocInitDone   = $false
+
+function Initialize-LocalizationMap {
+    <#
+    .SYNOPSIS
+        Baut aus $script:LocContentPairs die Übersetzungstabelle und den kombinierten
+        Suchausdruck auf (längste Begriffe zuerst, damit Phrasen vor Einzelwörtern greifen).
+    #>
+    [CmdletBinding()]
+    param()
+
+    if ($script:LocInitDone) { return }
+    $script:LocInitDone = $true
+
+    $map = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+    foreach ($line in ($script:LocContentPairs -split "`r?`n")) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith("#")) { continue }
+        $idx = $trimmed.IndexOf("|")
+        if ($idx -lt 1) { continue }
+        $de = $trimmed.Substring(0, $idx)
+        $en = $trimmed.Substring($idx + 1)
+        if ($de -ceq $en) { continue }
+        if (-not $map.ContainsKey($de)) { [void]$map.Add($de, $en) }
+    }
+
+    $script:LocMap = $map
+
+    if ($map.Count -gt 0) {
+        $alternatives = $map.Keys | Sort-Object -Property Length -Descending | ForEach-Object { [regex]::Escape($_) }
+        $pattern = "(?<![A-Za-z0-9ÄÖÜäöüß_])(?:" + ($alternatives -join "|") + ")(?![A-Za-z0-9ÄÖÜäöüß_])"
+        $script:LocRegex = [regex]::new($pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    }
+}
+
+function ConvertTo-LocalizedText {
+    <#
+    .SYNOPSIS
+        Übersetzt deutschen Klartext in die aktive Sprache. Bei DE unverändert.
+    .PARAMETER Text
+        Der zu übersetzende Text.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowEmptyString()]
+        [AllowNull()]
+        [string]$Text
+    )
+
+    if ($script:UILanguage -eq "DE" -or [string]::IsNullOrWhiteSpace($Text)) { return $Text }
+
+    Initialize-LocalizationMap
+    if (-not $script:LocRegex) { return $Text }
+
+    return $script:LocRegex.Replace($Text, {
+        param($m)
+        $hit = $null
+        if ($script:LocMap.TryGetValue($m.Value, [ref]$hit)) { return $hit }
+        return $m.Value
+    })
+}
+
+function ConvertTo-LocalizedHtml {
+    <#
+    .SYNOPSIS
+        Übersetzt nur die Textknoten eines HTML-Fragments und lässt Tags/Attribute unberührt.
+    .PARAMETER Html
+        Das zu übersetzende HTML-Fragment.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [AllowEmptyString()]
+        [AllowNull()]
+        [string]$Html
+    )
+
+    if ($script:UILanguage -eq "DE" -or [string]::IsNullOrWhiteSpace($Html)) { return $Html }
+
+    $parts = [regex]::Split($Html, '(<[^>]*>)')
+    for ($i = 0; $i -lt $parts.Count; $i++) {
+        $part = $parts[$i]
+        if ($part.StartsWith("<")) { continue }
+        if ([string]::IsNullOrWhiteSpace($part)) { continue }
+        # Numerische Umlaut-Entities dekodieren, damit die Begriffe erkannt werden
+        $part = $part -replace '&#196;', 'Ä' -replace '&#214;', 'Ö' -replace '&#220;', 'Ü' `
+                      -replace '&#228;', 'ä' -replace '&#246;', 'ö' -replace '&#252;', 'ü' -replace '&#223;', 'ß'
+        $parts[$i] = ConvertTo-LocalizedText -Text $part
+    }
+    return ($parts -join '')
+}
+
+#endregion
+
+#region ============================================================
 # ADMINISTRATOR-PRÜFUNG & AUTO-RESTART
 #endregion ============================================================
 
@@ -256,7 +1225,7 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 )
 
 if (-not $isAdmin) {
-    Write-Host "Das Skript erfordert Administrator-Rechte. Starte neu mit erhöhten Rechten..." -ForegroundColor Yellow
+    Write-Host (Get-LocText -Key 'AdminRequired') -ForegroundColor Yellow
     
     # Sammle alle übergebenen Parameter
     $argumentList = @()
@@ -269,6 +1238,9 @@ if (-not $isAdmin) {
     }
     if ($CompanyName -ne "Meine Organisation") {
         $argumentList += "-CompanyName '$CompanyName'"
+    }
+    if ($Language) {
+        $argumentList += "-Language '$Language'"
     }
     if ($OutputFormats.Count -gt 0) {
         $argumentList += "-OutputFormats @($(($OutputFormats | ForEach-Object { "'{0}'" -f $_ }) -join ','))"
@@ -291,7 +1263,7 @@ if (-not $isAdmin) {
     exit
 }
 
-Write-Host "Administrator-Rechte bestätigt. Skript wird ausgeführt..." -ForegroundColor Green
+Write-Host (Get-LocText -Key 'AdminConfirmed') -ForegroundColor Green
 
 #region ============================================================
 # VARIABLEN-DEFINITION
@@ -299,13 +1271,13 @@ Write-Host "Administrator-Rechte bestätigt. Skript wird ausgeführt..." -Foregr
 
 # --- Pfade und Dateien ---
 $script:LogPath                 = $OutputPath
-$script:LogFile                 = Join-Path -Path $LogPath -ChildPath "Exchange-Dokumentation_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
-$script:HTMLOutputFile          = Join-Path -Path $LogPath -ChildPath "Exchange_Dokumentation_$(Get-Date -Format 'yyyyMMdd_HHmmss').html"
-$script:Timestamp               = Get-Date -Format "dd.MM.yyyy HH:mm:ss"
-$script:DateOnly                = Get-Date -Format "dd.MM.yyyy"
+$script:LogFile                 = Join-Path -Path $LogPath -ChildPath "$(Get-LocText -Key 'LogFileNamePrefix')_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+$script:HTMLOutputFile          = Join-Path -Path $LogPath -ChildPath "$(Get-LocText -Key 'FileNamePrefix')_$(Get-Date -Format 'yyyyMMdd_HHmmss').html"
+$script:Timestamp               = if ($script:UILanguage -eq "EN") { Get-Date -Format "yyyy-MM-dd HH:mm:ss" } else { Get-Date -Format "dd.MM.yyyy HH:mm:ss" }
+$script:DateOnly                = if ($script:UILanguage -eq "EN") { Get-Date -Format "yyyy-MM-dd" } else { Get-Date -Format "dd.MM.yyyy" }
 
 # --- Dokumentations-Variablen ---
-$script:DocTitle                = "Exchange Server - Umgebungsdokumentation"
+$script:DocTitle                = Get-LocText -Key 'DocTitle'
 $script:DocSubTitle             = "$CompanyName"
 $script:DocAuthor               = $env:USERNAME
 $script:DocComputerName         = $env:COMPUTERNAME
@@ -317,7 +1289,7 @@ try {
     }
 }
 catch {
-    Write-Host "FEHLER: Ausgabeverzeichnis konnte nicht erstellt werden: $_" -ForegroundColor Red
+    Write-Host (Get-LocText -Key 'OutputDirError' -FormatArgs @("$_")) -ForegroundColor Red
 }
 
 # --- Sammelvariablen für HTML-Sektionen ---
@@ -367,7 +1339,7 @@ function Write-Log {
 
     try {
         $logTimestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        $logEntry = "[$logTimestamp] [$Level] $Message"
+        $logEntry = "[$logTimestamp] [$Level] $(ConvertTo-LocalizedText -Text $Message)"
 
         # Sicherstellen, dass das Verzeichnis existiert
         $logDir = Split-Path $script:LogFile -Parent
@@ -386,7 +1358,7 @@ function Write-Log {
         }
     }
     catch {
-        Write-Host "FEHLER beim Schreiben der Log-Datei: $_" -ForegroundColor Red
+        Write-Host (Get-LocText -Key 'LogWriteError' -FormatArgs @("$_")) -ForegroundColor Red
     }
 }
 
@@ -420,6 +1392,11 @@ function New-HTMLSection {
 
     $script:SectionCounter++
     $anchorId = "section_$($script:SectionCounter)"
+
+    # Sprachabhängige Aufbereitung (bei DE unverändert)
+    $Title    = ConvertTo-LocalizedText -Text $Title
+    $Category = ConvertTo-LocalizedText -Text $Category
+    $Content  = ConvertTo-LocalizedHtml -Html $Content
 
     # Inhaltsverzeichnis-Eintrag
     [void]$script:TOCEntries.Add(@{
@@ -462,11 +1439,13 @@ function ConvertTo-HTMLTable {
         [string[]]$Properties,
 
         [Parameter(Mandatory = $false)]
-        [string]$NoDataMessage = "Keine Daten verfügbar.",
+        [string]$NoDataMessage = "",
 
         [Parameter(Mandatory = $false)]
         [string]$HeaderColor = ""
     )
+
+    if (-not $NoDataMessage) { $NoDataMessage = Get-LocText -Key 'NoDataDefault' }
 
     if (-not $Data -or $Data.Count -eq 0) {
         return "<p class='no-data'>$NoDataMessage</p>"
@@ -8077,7 +9056,7 @@ function Build-HTMLDocument {
     .SYNOPSIS
         Baut das finale HTML-Dokument mit Deckblatt, Inhaltsverzeichnis und allen Sektionen.
     #>
-    Write-Log -Message "=== Erstelle HTML-Dokument ===" -Level "INFO"
+    Write-Log -Message (Get-LocText -Key 'BuildHtmlDoc') -Level "INFO"
 
     $cssStyle = @"
     <style>
@@ -8243,7 +9222,7 @@ function Build-HTMLDocument {
 
     # Inhaltsverzeichnis (nach Category + Title sortiert)
     $sortedTOC = $script:TOCEntries | Sort-Object { $_.Category }, { $_.Title }
-    $tocHTML = "<div class='toc'>`n<h2>Inhaltsverzeichnis</h2>`n<ul>"
+    $tocHTML = "<div class='toc'>`n<h2>$(Get-LocText -Key 'Toc')</h2>`n<ul>"
     $lastCategory = ""
     foreach ($entry in $sortedTOC) {
         if ($entry.Category -and $entry.Category -ne $lastCategory) {
@@ -8259,24 +9238,24 @@ function Build-HTMLDocument {
     # Zusammenfassung
     $summaryHTML = @"
     <div class="summary-box">
-        <h3>Dokumentations-Zusammenfassung</h3>
-        <p><strong>Dokumentierte Server:</strong> $($ExchangeServers -join ', ')</p>
-        <p><strong>Erstellt am:</strong> $script:Timestamp</p>
-        <p><strong>Erstellt von:</strong> $script:DocAuthor auf $script:DocComputerName</p>
-        <p><strong>Sektionen:</strong> $($script:SectionCounter)</p>
-        <p><strong>Fehler:</strong> $($script:ErrorCount)</p>
-        <p><strong>Warnungen:</strong> $($script:WarningCount)</p>
+        <h3>$(Get-LocText -Key 'SummaryHeading')</h3>
+        <p><strong>$(Get-LocText -Key 'DocumentedServers'):</strong> $($ExchangeServers -join ', ')</p>
+        <p><strong>$(Get-LocText -Key 'CreatedOn'):</strong> $script:Timestamp</p>
+        <p><strong>$(Get-LocText -Key 'CreatedBy'):</strong> $(Get-LocText -Key 'CreatedByOn' -FormatArgs @($script:DocAuthor, $script:DocComputerName))</p>
+        <p><strong>$(Get-LocText -Key 'SectionsLabel'):</strong> $($script:SectionCounter)</p>
+        <p><strong>$(Get-LocText -Key 'ErrorsLabel'):</strong> $($script:ErrorCount)</p>
+        <p><strong>$(Get-LocText -Key 'WarningsLabel'):</strong> $($script:WarningCount)</p>
     </div>
 "@
 
     # Gesamtes HTML-Dokument
     $fullHTML = @"
 <!DOCTYPE html>
-<html lang="de">
+<html lang="$(Get-LocText -Key 'HtmlLang')">
 <head>
     <meta charset="UTF-8">
     <meta name="author" content="$script:DocAuthor">
-    <meta name="generator" content="Exchange Dokumentations-Skript v1.7">
+    <meta name="generator" content="$(Get-LocText -Key 'GeneratorMeta')">
     <title>$script:DocTitle - $script:DocSubTitle</title>
     $cssStyle
 </head>
@@ -8286,10 +9265,10 @@ function Build-HTMLDocument {
         <h1>$script:DocTitle</h1>
         <h2>$script:DocSubTitle</h2>
         <div class="meta">
-            <p>Erstellt am: $script:DateOnly</p>
-            <p>Erstellt von: $script:DocAuthor</p>
-            <p>Dokumentierte Server: $($ExchangeServers -join ', ')</p>
-            <p>Version: 1.7 (Exchange 2019 &amp; SE / CIM-DCOM Fallback)</p>
+            <p>$(Get-LocText -Key 'CreatedOn'): $script:DateOnly</p>
+            <p>$(Get-LocText -Key 'CreatedBy'): $script:DocAuthor</p>
+            <p>$(Get-LocText -Key 'DocumentedServers'): $($ExchangeServers -join ', ')</p>
+            <p>$(Get-LocText -Key 'VersionLabel'): $(Get-LocText -Key 'VersionSuffix')</p>
         </div>
     </div>
 
@@ -8300,7 +9279,7 @@ function Build-HTMLDocument {
     $($script:HTMLSections -join "`n`n")
 
     <div class="footer">
-        <p>$script:DocTitle | $script:DocSubTitle | Erstellt: $script:Timestamp | PowerShell Dokumentation v1.7</p>
+        <p>$script:DocTitle | $script:DocSubTitle | $(Get-LocText -Key 'FooterCreated'): $script:Timestamp | $(Get-LocText -Key 'FooterTool')</p>
     </div>
 
 </body>
@@ -8322,7 +9301,7 @@ function Get-DocSectionRegistry {
         Liefert die geordnete Liste aller verfügbaren Dokumentations-Sektionen
         (Schlüssel, Anzeigename, Kategorie, zugehörige Funktion). Basis für GUI und Runner.
     #>
-    return @(
+    $registry = @(
         # === HARDWARE & OS ===
         [PSCustomObject]@{ Key = "Hardware";           Label = "Hardware & Server-Details";        Category = "Hardware & OS";      Function = "Get-HardwareInformation" }
         [PSCustomObject]@{ Key = "ProcessorCores";     Label = "Processor Core Analyse";            Category = "Hardware & OS";      Function = "Get-ProcessorCoreAnalysis" }
@@ -8420,6 +9399,15 @@ function Get-DocSectionRegistry {
         [PSCustomObject]@{ Key = "ArchiveConfig";     Label = "Archive Konfiguration";              Category = "Empfänger";          Function = "Get-ArchiveConfigurationInfo" }
         [PSCustomObject]@{ Key = "CalendarResource";   Label = "Calendar & Resource Mailbox";       Category = "Empfänger";          Function = "Get-CalendarResourceConfigInfo" }
     )
+
+    if ($script:UILanguage -ne "DE") {
+        foreach ($item in $registry) {
+            $item.Label    = ConvertTo-LocalizedText -Text $item.Label
+            $item.Category = ConvertTo-LocalizedText -Text $item.Category
+        }
+    }
+
+    return $registry
 }
 
 function ConvertTo-MarkdownFromHtml {
@@ -8496,22 +9484,22 @@ function Build-MarkdownDocument {
     .SYNOPSIS
         Baut ein Markdown-Dokument aus den gesammelten HTML-Sektionen.
     #>
-    Write-Log -Message "=== Erstelle Markdown-Dokument ===" -Level "INFO"
+    Write-Log -Message (Get-LocText -Key 'BuildMdDoc') -Level "INFO"
 
     $sb = [System.Text.StringBuilder]::new()
     [void]$sb.AppendLine("# $script:DocTitle")
     [void]$sb.AppendLine()
     [void]$sb.AppendLine("**$script:DocSubTitle**")
     [void]$sb.AppendLine()
-    [void]$sb.AppendLine("- Erstellt am: $script:DateOnly")
-    [void]$sb.AppendLine("- Erstellt von: $script:DocAuthor auf $script:DocComputerName")
-    [void]$sb.AppendLine("- Dokumentierte Server: $($ExchangeServers -join ', ')")
-    [void]$sb.AppendLine("- Erkannte Edition: $script:ExchangeEdition")
-    [void]$sb.AppendLine("- Fehler: $($script:ErrorCount) | Warnungen: $($script:WarningCount)")
+    [void]$sb.AppendLine("- $(Get-LocText -Key 'CreatedOn'): $script:DateOnly")
+    [void]$sb.AppendLine("- $(Get-LocText -Key 'CreatedBy'): $(Get-LocText -Key 'CreatedByOn' -FormatArgs @($script:DocAuthor, $script:DocComputerName))")
+    [void]$sb.AppendLine("- $(Get-LocText -Key 'DocumentedServers'): $($ExchangeServers -join ', ')")
+    [void]$sb.AppendLine("- $(Get-LocText -Key 'DetectedEdition'): $script:ExchangeEdition")
+    [void]$sb.AppendLine("- $(Get-LocText -Key 'ErrorsLabel'): $($script:ErrorCount) | $(Get-LocText -Key 'WarningsLabel'): $($script:WarningCount)")
     [void]$sb.AppendLine()
 
     # Inhaltsverzeichnis (nach Category + Title sortiert)
-    [void]$sb.AppendLine("## Inhaltsverzeichnis")
+    [void]$sb.AppendLine("## $(Get-LocText -Key 'Toc')")
     [void]$sb.AppendLine()
     $sortedTOC = $script:TOCEntries | Sort-Object { $_.Category }, { $_.Title }
     $lastCategory = ""
@@ -8634,7 +9622,7 @@ function Show-DocumentationGui {
         Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
     }
     catch {
-        Write-Host "FEHLER: WPF-Assemblies konnten nicht geladen werden: $_" -ForegroundColor Red
+        Write-Host (Get-LocText -Key 'GuiWpfError' -FormatArgs @("$_")) -ForegroundColor Red
         return $null
     }
 
@@ -8657,10 +9645,10 @@ function Show-DocumentationGui {
         # Keine Server gefunden - manuelle Eingabe nötig
     }
 
-    [xml]$xaml = @'
+    $xamlRaw = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Exchange Server Dokumentation v1.7" Height="920" Width="1120"
+        Title="__T_WINDOWTITLE__" Height="960" Width="1120"
         WindowStartupLocation="CenterScreen" Background="#EDEDF2" ResizeMode="CanResize" MinWidth="900" MinHeight="700"
         FontFamily="Segoe UI, Arial, sans-serif">
     <Window.Resources>
@@ -8936,12 +9924,12 @@ function Show-DocumentationGui {
                 </Border>
                 <!-- Titel -->
                 <StackPanel Grid.Column="1" Margin="16,16,0,16" VerticalAlignment="Center">
-                    <TextBlock Text="Exchange Server Dokumentation" FontSize="26" FontWeight="SemiBold" Foreground="White"/>
-                    <TextBlock Text="System-Checks · TLS/SSL · Multi-Format Export · 13 neue Prüfungen" Foreground="#90CAF9" FontSize="13" Margin="0,4,0,0"/>
+                    <TextBlock Text="__T_HEADERTITLE__" FontSize="26" FontWeight="SemiBold" Foreground="White"/>
+                    <TextBlock Text="__T_HEADERSUB__" Foreground="#90CAF9" FontSize="13" Margin="0,4,0,0"/>
                 </StackPanel>
                 <!-- Version Badge -->
                 <Border Grid.Column="2" CornerRadius="6" Background="#FFFFFF22" Padding="10,6" Margin="0,0,16,0" VerticalAlignment="Center">
-                    <TextBlock Text="v1.7" Foreground="Black" FontWeight="Bold" FontSize="13"/>
+                    <TextBlock Text="v2.0" Foreground="Black" FontWeight="Bold" FontSize="13"/>
                 </Border>
             </Grid>
         </Border>
@@ -8961,10 +9949,10 @@ function Show-DocumentationGui {
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" Orientation="Horizontal">
                         <TextBlock Text="🖥️" FontSize="18" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                        <TextBlock Text="Exchange Server" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
+                        <TextBlock Text="__T_EXSERVER__" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
                     </StackPanel>
                     <StackPanel Grid.Column="2" Orientation="Horizontal">
-                        <CheckBox Name="ChkSelectAllServers" Content="Alle auswählen" Style="{StaticResource ModernCheckBox}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <CheckBox Name="ChkSelectAllServers" Content="__T_SELECTALL__" Style="{StaticResource ModernCheckBox}" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Grid>
                 <Border Grid.Row="1" CornerRadius="8" Background="#F5F5F8" Padding="14,12" MinHeight="40">
@@ -8988,7 +9976,7 @@ function Show-DocumentationGui {
                 <StackPanel Grid.Column="0">
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                         <TextBlock Text="🏢" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                        <TextBlock Text="Organisation" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
+                        <TextBlock Text="__T_ORG__" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
                     </StackPanel>
                     <TextBox Name="TxtCompany" Style="{StaticResource ModernTextBox}"/>
                 </StackPanel>
@@ -8996,7 +9984,7 @@ function Show-DocumentationGui {
                 <StackPanel Grid.Column="2">
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                         <TextBlock Text="📁" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                        <TextBlock Text="Ausgabepfad" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
+                        <TextBlock Text="__T_OUTPATH__" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
                     </StackPanel>
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -9006,7 +9994,7 @@ function Show-DocumentationGui {
                         <TextBox Grid.Column="0" Name="TxtOutputPath" Style="{StaticResource ModernTextBox}"/>
                         <Button Grid.Column="1" Name="BtnBrowse" Content="📂" Width="40" Height="36" Margin="10,0,0,0" Padding="0"
                                 FontSize="18" Cursor="Hand" BorderThickness="1.5" BorderBrush="#BDBDBD" Background="White"
-                                ToolTip="Ausgabeverzeichnis wählen">
+                                ToolTip="__T_BROWSE__">
                             <Button.Template>
                                 <ControlTemplate TargetType="Button">
                                     <Border x:Name="border" CornerRadius="6" Background="White" BorderBrush="#BDBDBD" BorderThickness="1.5">
@@ -9029,19 +10017,35 @@ function Show-DocumentationGui {
             </Grid>
         </Border>
 
-        <!-- ===== AUSGABEFORMATE ===== -->
+        <!-- ===== AUSGABEFORMATE & SPRACHE ===== -->
         <Border Grid.Row="3" Style="{StaticResource CardStyle}">
-            <StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                    <TextBlock Text="📄" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <TextBlock Text="Ausgabeformate" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                        <TextBlock Text="📄" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock Text="__T_FORMATS__" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <ToggleButton Name="ChkHtml" Content="HTML" Style="{StaticResource FormatToggleStyle}" IsChecked="True"/>
+                        <ToggleButton Name="ChkPdf" Content="PDF" Style="{StaticResource FormatToggleStyle}"/>
+                        <ToggleButton Name="ChkMarkdown" Content="Markdown" Style="{StaticResource FormatToggleStyle}"/>
+                    </StackPanel>
                 </StackPanel>
-                <StackPanel Orientation="Horizontal">
-                    <ToggleButton Name="ChkHtml" Content="HTML" Style="{StaticResource FormatToggleStyle}" IsChecked="True"/>
-                    <ToggleButton Name="ChkPdf" Content="PDF" Style="{StaticResource FormatToggleStyle}"/>
-                    <ToggleButton Name="ChkMarkdown" Content="Markdown" Style="{StaticResource FormatToggleStyle}"/>
+                <StackPanel Grid.Column="1">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                        <TextBlock Text="🌐" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock Text="__T_LANGUAGE__" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <ToggleButton Name="ChkLangDe" Content="__T_LANGDE__" Style="{StaticResource FormatToggleStyle}"/>
+                        <ToggleButton Name="ChkLangEn" Content="__T_LANGEN__" Style="{StaticResource FormatToggleStyle}" Margin="0,0,0,0"/>
+                    </StackPanel>
                 </StackPanel>
-            </StackPanel>
+            </Grid>
         </Border>
 
         <!-- =Category Header== -->
@@ -9054,9 +10058,9 @@ function Show-DocumentationGui {
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Orientation="Horizontal">
                     <TextBlock Text="📋" FontSize="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <TextBlock Text="Dokumentationsbereiche" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
+                    <TextBlock Text="__T_SECTIONS__" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
                 </StackPanel>
-                <CheckBox Grid.Column="2" Name="ChkSelectAll" Content="Alle auswählen" Style="{StaticResource ModernCheckBox}" FontWeight="SemiBold" IsChecked="True"/>
+                <CheckBox Grid.Column="2" Name="ChkSelectAll" Content="__T_SELECTALL__" Style="{StaticResource ModernCheckBox}" FontWeight="SemiBold" IsChecked="True"/>
             </Grid>
         </Border>
 
@@ -9081,19 +10085,43 @@ function Show-DocumentationGui {
 
         <!-- ===== BUTTONS ===== -->
         <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,0,0">
-            <Button Name="BtnCancel" Content="Abbrechen" Width="130" Style="{StaticResource SecondaryButtonStyle}" Margin="0,0,14,0"/>
-            <Button Name="BtnStart" Content="  🚀  Dokumentation starten" Width="260" Style="{StaticResource PrimaryButtonStyle}"/>
+            <Button Name="BtnCancel" Content="__T_CANCEL__" Width="130" Style="{StaticResource SecondaryButtonStyle}" Margin="0,0,14,0"/>
+            <Button Name="BtnStart" Content="__T_START__" Width="260" Style="{StaticResource PrimaryButtonStyle}"/>
         </StackPanel>
     </Grid>
 </Window>
 '@
+
+    # Sprachabhängige Beschriftungen in die XAML einsetzen
+    $xamlText = $xamlRaw
+    $guiTexts = @{
+        '__T_WINDOWTITLE__' = Get-LocText -Key 'GuiWindowTitle'
+        '__T_HEADERTITLE__' = Get-LocText -Key 'GuiHeaderTitle'
+        '__T_HEADERSUB__'   = Get-LocText -Key 'GuiHeaderSubtitle'
+        '__T_EXSERVER__'    = Get-LocText -Key 'GuiExchangeServer'
+        '__T_SELECTALL__'   = Get-LocText -Key 'GuiSelectAll'
+        '__T_ORG__'         = Get-LocText -Key 'GuiOrganisation'
+        '__T_OUTPATH__'     = Get-LocText -Key 'GuiOutputPath'
+        '__T_BROWSE__'      = Get-LocText -Key 'GuiBrowseTooltip'
+        '__T_FORMATS__'     = Get-LocText -Key 'GuiOutputFormats'
+        '__T_LANGUAGE__'    = Get-LocText -Key 'GuiLanguage'
+        '__T_LANGDE__'      = Get-LocText -Key 'GuiLangGerman'
+        '__T_LANGEN__'      = Get-LocText -Key 'GuiLangEnglish'
+        '__T_SECTIONS__'    = Get-LocText -Key 'GuiSections'
+        '__T_CANCEL__'      = Get-LocText -Key 'GuiCancel'
+        '__T_START__'       = Get-LocText -Key 'GuiStart'
+    }
+    foreach ($token in $guiTexts.Keys) {
+        $xamlText = $xamlText.Replace($token, [System.Security.SecurityElement]::Escape($guiTexts[$token]))
+    }
+    [xml]$xaml = $xamlText
 
     try {
         $reader = New-Object System.Xml.XmlNodeReader $xaml
         $window = [Windows.Markup.XamlReader]::Load($reader)
     }
     catch {
-        Write-Host "FEHLER beim Laden der XAML: $_" -ForegroundColor Red
+        Write-Host (Get-LocText -Key 'GuiXamlError' -FormatArgs @("$_")) -ForegroundColor Red
         return $null
     }
 
@@ -9108,6 +10136,8 @@ function Show-DocumentationGui {
         $chkHtml             = $window.FindName("ChkHtml")
         $chkPdf              = $window.FindName("ChkPdf")
         $chkMarkdown         = $window.FindName("ChkMarkdown")
+        $chkLangDe           = $window.FindName("ChkLangDe")
+        $chkLangEn           = $window.FindName("ChkLangEn")
         $chkSelectAll        = $window.FindName("ChkSelectAll")
         $categoryPanel       = $window.FindName("CategoryPanel")
         $txtStatus           = $window.FindName("TxtStatus")
@@ -9116,13 +10146,27 @@ function Show-DocumentationGui {
         $btnCancel           = $window.FindName("BtnCancel")
     }
     catch {
-        Write-Host "FEHLER beim Zugriff auf GUI-Steuerelemente: $_" -ForegroundColor Red
+        Write-Host (Get-LocText -Key 'GuiControlError' -FormatArgs @("$_")) -ForegroundColor Red
         return $null
     }
 
     # Vorbelegung
     $txtCompany.Text    = $DefaultCompany
     $txtOutputPath.Text = $DefaultOutputPath
+    $chkLangDe.IsChecked = ($script:UILanguage -eq "DE")
+    $chkLangEn.IsChecked = ($script:UILanguage -eq "EN")
+
+    # Sprachwechsel: GUI wird in der neuen Sprache neu aufgebaut
+    $chkLangDe.Add_Click({
+        if ($script:UILanguage -eq "DE") { $chkLangDe.IsChecked = $true; return }
+        $script:GuiResult = @{ SwitchLanguage = "DE"; Company = $txtCompany.Text; OutputPath = $txtOutputPath.Text }
+        $window.Close()
+    })
+    $chkLangEn.Add_Click({
+        if ($script:UILanguage -eq "EN") { $chkLangEn.IsChecked = $true; return }
+        $script:GuiResult = @{ SwitchLanguage = "EN"; Company = $txtCompany.Text; OutputPath = $txtOutputPath.Text }
+        $window.Close()
+    })
 
     # Server-Checkboxen
     $serverCheckboxes = @{}
@@ -9191,11 +10235,16 @@ function Show-DocumentationGui {
             "Hardware & OS"      = "🖥️"
             "Active Directory"   = "🏛️"
             "Exchange Basis"     = "⚙️"
+            "Exchange Core"      = "⚙️"
             "Mail-Flow"          = "📨"
+            "Mail Flow"          = "📨"
             "DNS & Records"      = "🌐"
             "Empfänger"          = "👤"
+            "Recipients"         = "👤"
             "Sicherheit"         = "🔒"
+            "Security"           = "🔒"
             "Sicherheit & TLS"   = "🔐"
+            "Security & TLS"     = "🔐"
             "Compliance"         = "📋"
             "Hybrid / Cloud"     = "☁️"
         }
@@ -9254,7 +10303,7 @@ function Show-DocumentationGui {
 
     $btnBrowse.Add_Click({
         $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-        $dlg.Description = "Ausgabeverzeichnis wählen"
+        $dlg.Description = Get-LocText -Key 'GuiBrowseTooltip'
         if ($txtOutputPath.Text -and (Test-Path $txtOutputPath.Text)) { $dlg.SelectedPath = $txtOutputPath.Text }
         if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
             $txtOutputPath.Text = $dlg.SelectedPath
@@ -9293,11 +10342,11 @@ function Show-DocumentationGui {
         }
 
         if ($selectedServers.Count -eq 0) {
-            & $script:ShowStatus -Message "Fehler: Bitte mindestens einen Exchange-Server auswählen." -Type "error"
+            & $script:ShowStatus -Message (Get-LocText -Key 'GuiErrNoServer') -Type "error"
             return
         }
         if ([string]::IsNullOrWhiteSpace($txtOutputPath.Text)) {
-            & $script:ShowStatus -Message "Fehler: Bitte einen Ausgabepfad angeben." -Type "error"
+            & $script:ShowStatus -Message (Get-LocText -Key 'GuiErrNoPath') -Type "error"
             return
         }
 
@@ -9306,7 +10355,7 @@ function Show-DocumentationGui {
             if ($sectionCheckboxes[$key].IsChecked) { $selectedSections += $key }
         }
         if ($selectedSections.Count -eq 0) {
-            & $script:ShowStatus -Message "Fehler: Bitte mindestens einen Dokumentationsbereich auswählen." -Type "error"
+            & $script:ShowStatus -Message (Get-LocText -Key 'GuiErrNoSection') -Type "error"
             return
         }
 
@@ -9315,7 +10364,7 @@ function Show-DocumentationGui {
         if ($chkPdf.IsChecked)      { $formats += "PDF" }
         if ($chkMarkdown.IsChecked) { $formats += "Markdown" }
         if ($formats.Count -eq 0) {
-            & $script:ShowStatus -Message "Fehler: Bitte mindestens ein Ausgabeformat wählen." -Type "error"
+            & $script:ShowStatus -Message (Get-LocText -Key 'GuiErrNoFormat') -Type "error"
             return
         }
 
@@ -9325,6 +10374,7 @@ function Show-DocumentationGui {
             OutputPath = $txtOutputPath.Text
             Sections   = $selectedSections
             Formats    = $formats
+            Language   = $script:UILanguage
         }
         $window.Close()
     })
@@ -9361,13 +10411,28 @@ try {
     $selectedSectionKeys = if ($Sections) { $Sections } else { (Get-DocSectionRegistry).Key }
 
     if ($useGui) {
-        $guiConfig = Show-DocumentationGui `
-            -DefaultServers ($ExchangeServers -join ", ") `
-            -DefaultCompany $CompanyName `
-            -DefaultOutputPath $OutputPath
+        $guiConfig = $null
+        do {
+            $guiRestart = $false
+            $guiConfig = Show-DocumentationGui `
+                -DefaultServers ($ExchangeServers -join ", ") `
+                -DefaultCompany $CompanyName `
+                -DefaultOutputPath $OutputPath
+
+            if ($guiConfig -and $guiConfig.ContainsKey("SwitchLanguage")) {
+                # Sprache umschalten und GUI neu aufbauen
+                $script:UILanguage = $guiConfig.SwitchLanguage
+                if ($guiConfig.Company)    { $CompanyName = $guiConfig.Company }
+                if ($guiConfig.OutputPath) { $OutputPath  = $guiConfig.OutputPath }
+                $script:LocMap      = $null
+                $script:LocRegex    = $null
+                $script:LocInitDone = $false
+                $guiRestart = $true
+            }
+        } while ($guiRestart)
 
         if (-not $guiConfig) {
-            Write-Host "Abgebrochen durch Benutzer (GUI)." -ForegroundColor Yellow
+            Write-Host (Get-LocText -Key 'CancelledByUser') -ForegroundColor Yellow
             return
         }
 
@@ -9377,11 +10442,12 @@ try {
         $OutputPath          = $guiConfig.OutputPath
         $selectedSectionKeys = $guiConfig.Sections
         $OutputFormats       = $guiConfig.Formats
+        if ($guiConfig.Language) { $script:UILanguage = $guiConfig.Language }
     }
 
     # Validierung
     if (-not $ExchangeServers -or $ExchangeServers.Count -eq 0) {
-        throw "Keine Exchange-Server angegeben. Bitte -ExchangeServers verwenden oder die GUI nutzen."
+        throw (Get-LocText -Key 'NoServersGiven')
     }
 
     # ============================================================
@@ -9389,28 +10455,33 @@ try {
     # ============================================================
     $script:LogPath        = $OutputPath
     $stamp                 = Get-Date -Format 'yyyyMMdd_HHmmss'
-    $script:LogFile        = Join-Path -Path $LogPath -ChildPath "Exchange-Dokumentation_$stamp.log"
-    $script:HTMLOutputFile = Join-Path -Path $LogPath -ChildPath "Exchange_Dokumentation_$stamp.html"
-    $script:PDFOutputFile  = Join-Path -Path $LogPath -ChildPath "Exchange_Dokumentation_$stamp.pdf"
-    $script:MDOutputFile   = Join-Path -Path $LogPath -ChildPath "Exchange_Dokumentation_$stamp.md"
+    $docPrefix             = Get-LocText -Key 'FileNamePrefix'
+    $script:LogFile        = Join-Path -Path $LogPath -ChildPath "$(Get-LocText -Key 'LogFileNamePrefix')_$stamp.log"
+    $script:HTMLOutputFile = Join-Path -Path $LogPath -ChildPath "${docPrefix}_$stamp.html"
+    $script:PDFOutputFile  = Join-Path -Path $LogPath -ChildPath "${docPrefix}_$stamp.pdf"
+    $script:MDOutputFile   = Join-Path -Path $LogPath -ChildPath "${docPrefix}_$stamp.md"
     $script:DocSubTitle    = $CompanyName
+    $script:DocTitle       = Get-LocText -Key 'DocTitle'
+    $script:Timestamp      = if ($script:UILanguage -eq "EN") { Get-Date -Format "yyyy-MM-dd HH:mm:ss" } else { Get-Date -Format "dd.MM.yyyy HH:mm:ss" }
+    $script:DateOnly       = if ($script:UILanguage -eq "EN") { Get-Date -Format "yyyy-MM-dd" } else { Get-Date -Format "dd.MM.yyyy" }
 
     # ============================================================
     # 1. VORBEREITUNG
     # ============================================================
     if (-not (Test-Path -Path $LogPath)) {
         New-Item -Path $LogPath -ItemType Directory -Force | Out-Null
-        Write-Host "Ausgabeverzeichnis erstellt: $LogPath" -ForegroundColor Cyan
+        Write-Host (Get-LocText -Key 'OutputDirCreated' -FormatArgs @($LogPath)) -ForegroundColor Cyan
     }
 
     # Logging starten
     Write-Log -Message "=============================================" -Level "INFO"
-    Write-Log -Message "Exchange Dokumentation gestartet (v1.7 - 2019/SE)" -Level "INFO"
-    Write-Log -Message "Zielserver: $($ExchangeServers -join ', ')" -Level "INFO"
-    Write-Log -Message "Ausgabepfad: $LogPath" -Level "INFO"
-    Write-Log -Message "Ausgabeformate: $($OutputFormats -join ', ')" -Level "INFO"
-    Write-Log -Message "Gewählte Sektionen: $($selectedSectionKeys.Count)" -Level "INFO"
-    Write-Log -Message "Verbindungsmodus: CIM mit automatischem DCOM Fallback" -Level "INFO"
+    Write-Log -Message (Get-LocText -Key 'StartBanner') -Level "INFO"
+    Write-Log -Message (Get-LocText -Key 'LanguageLog') -Level "INFO"
+    Write-Log -Message (Get-LocText -Key 'TargetServers' -FormatArgs @(($ExchangeServers -join ', '))) -Level "INFO"
+    Write-Log -Message (Get-LocText -Key 'OutputPathLog' -FormatArgs @($LogPath)) -Level "INFO"
+    Write-Log -Message (Get-LocText -Key 'OutputFormatsLog' -FormatArgs @(($OutputFormats -join ', '))) -Level "INFO"
+    Write-Log -Message (Get-LocText -Key 'SelectedSectionsLog' -FormatArgs @($selectedSectionKeys.Count)) -Level "INFO"
+    Write-Log -Message (Get-LocText -Key 'ConnectionModeLog') -Level "INFO"
     Write-Log -Message "=============================================" -Level "INFO"
 
     # ============================================================
@@ -9418,8 +10489,8 @@ try {
     # ============================================================
     $exchangeLoaded = Initialize-ExchangeEnvironment
     if (-not $exchangeLoaded) {
-        Write-Log -Message "Exchange Management Tools nicht verfügbar. Skript wird beendet." -Level "ERROR"
-        throw "Exchange Management Tools nicht verfügbar."
+        Write-Log -Message (Get-LocText -Key 'ExchangeToolsMissing') -Level "ERROR"
+        throw (Get-LocText -Key 'ExchangeToolsThrow')
     }
 
     # Edition erkennen (2019 vs. SE)
@@ -9429,40 +10500,40 @@ try {
     Update-ExchangeVersionCatalogOnline
 
     # DocTitle dynamisch anpassen
-    $script:DocTitle = "Exchange Server $($script:ExchangeEdition) - Umgebungsdokumentation"
+    $script:DocTitle = Get-LocText -Key 'DocTitleEdition' -FormatArgs @($script:ExchangeEdition)
 
     # ============================================================
     # 3. KONNEKTIVITÄTSTEST
     # ============================================================
-    Write-Log -Message "=== Prüfe Erreichbarkeit der Server ===" -Level "INFO"
+    Write-Log -Message (Get-LocText -Key 'CheckReachability') -Level "INFO"
     foreach ($server in $ExchangeServers) {
         try {
             if (-not (Test-Connection -ComputerName $server -Count 2 -Quiet -ErrorAction Stop)) {
-                Write-Log -Message "Server $server ist NICHT erreichbar!" -Level "WARNING"
+                Write-Log -Message (Get-LocText -Key 'ServerUnreachable' -FormatArgs @($server)) -Level "WARNING"
             }
             else {
-                Write-Log -Message "Server $server ist erreichbar (Ping OK)." -Level "INFO"
+                Write-Log -Message (Get-LocText -Key 'ServerReachable' -FormatArgs @($server)) -Level "INFO"
             }
         }
         catch {
-            Write-Log -Message "Ping-Test für ${server} fehlgeschlagen: $_" -Level "WARNING"
+            Write-Log -Message (Get-LocText -Key 'PingFailed' -FormatArgs @($server, "$_")) -Level "WARNING"
         }
     }
 
     # ============================================================
     # 4. DATENSAMMLUNG - NUR AUSGEWÄHLTE SEKTIONEN
     # ============================================================
-    Write-Log -Message "=== Starte Datensammlung ($($selectedSectionKeys.Count) Sektionen) ===" -Level "INFO"
+    Write-Log -Message (Get-LocText -Key 'StartCollection' -FormatArgs @($selectedSectionKeys.Count)) -Level "INFO"
 
     $registry = Get-DocSectionRegistry
     foreach ($section in $registry) {
         if ($selectedSectionKeys -contains $section.Key) {
             try {
-                Write-Log -Message "Sektion: $($section.Label) [$($section.Key)]" -Level "INFO"
+                Write-Log -Message (Get-LocText -Key 'SectionLog' -FormatArgs @($section.Label, $section.Key)) -Level "INFO"
                 & $section.Function
             }
             catch {
-                Write-Log -Message "Fehler in Sektion $($section.Key): $_" -Level "ERROR"
+                Write-Log -Message (Get-LocText -Key 'SectionError' -FormatArgs @($section.Key, "$_")) -Level "ERROR"
             }
         }
     }
@@ -9476,7 +10547,7 @@ try {
     $needHtml = ($OutputFormats -contains "HTML") -or ($OutputFormats -contains "PDF")
 
     if ($needHtml) {
-        Write-Log -Message "=== Generiere HTML-Dokument ===" -Level "INFO"
+        Write-Log -Message (Get-LocText -Key 'GenHtml') -Level "INFO"
         $finalHTML = Build-HTMLDocument
         $finalHTML | Out-File -FilePath $script:HTMLOutputFile -Encoding UTF8 -Force
         if ($OutputFormats -contains "HTML") {
@@ -9485,7 +10556,7 @@ try {
     }
 
     if ($OutputFormats -contains "PDF") {
-        Write-Log -Message "=== Generiere PDF-Dokument ===" -Level "INFO"
+        Write-Log -Message (Get-LocText -Key 'GenPdf') -Level "INFO"
         if (Export-DocumentToPdf -HtmlPath $script:HTMLOutputFile -PdfPath $script:PDFOutputFile) {
             [void]$createdFiles.Add($script:PDFOutputFile)
         }
@@ -9496,46 +10567,47 @@ try {
     }
 
     if ($OutputFormats -contains "Markdown") {
-        Write-Log -Message "=== Generiere Markdown-Dokument ===" -Level "INFO"
+        Write-Log -Message (Get-LocText -Key 'GenMd') -Level "INFO"
         $finalMD = Build-MarkdownDocument
         $finalMD | Out-File -FilePath $script:MDOutputFile -Encoding UTF8 -Force
         [void]$createdFiles.Add($script:MDOutputFile)
     }
 
     Write-Log -Message "=============================================" -Level "INFO"
-    Write-Log -Message "Dokumentation erfolgreich erstellt!" -Level "INFO"
-    foreach ($f in $createdFiles) { Write-Log -Message "Datei: $f" -Level "INFO" }
-    Write-Log -Message "Log-Datei:  $($script:LogFile)" -Level "INFO"
-    Write-Log -Message "Fehler: $($script:ErrorCount) | Warnungen: $($script:WarningCount)" -Level "INFO"
+    Write-Log -Message (Get-LocText -Key 'DocCreated') -Level "INFO"
+    foreach ($f in $createdFiles) { Write-Log -Message (Get-LocText -Key 'FileLog' -FormatArgs @($f)) -Level "INFO" }
+    Write-Log -Message (Get-LocText -Key 'LogFileLog' -FormatArgs @($script:LogFile)) -Level "INFO"
+    Write-Log -Message (Get-LocText -Key 'ErrWarnLog' -FormatArgs @($script:ErrorCount, $script:WarningCount)) -Level "INFO"
     Write-Log -Message "=============================================" -Level "INFO"
 
     # Konsolenausgabe
     Write-Host "`n" -NoNewline
     Write-Host "===============================================================" -ForegroundColor Cyan
-    Write-Host "  Exchange Dokumentation abgeschlossen! (v1.9 - 2013/2016/2019/SE)" -ForegroundColor Cyan
+    Write-Host (Get-LocText -Key 'ConsoleDone') -ForegroundColor Cyan
     Write-Host "===============================================================" -ForegroundColor Cyan
     foreach ($f in $createdFiles) {
-        Write-Host "  Datei: $f" -ForegroundColor White
+        Write-Host (Get-LocText -Key 'ConsoleFile' -FormatArgs @($f)) -ForegroundColor White
     }
-    Write-Host "  Log-Datei:  $($script:LogFile)" -ForegroundColor White
-    Write-Host "  Fehler:     $($script:ErrorCount) | Warnungen: $($script:WarningCount)" -ForegroundColor White
+    Write-Host (Get-LocText -Key 'ConsoleLogFile' -FormatArgs @($script:LogFile)) -ForegroundColor White
+    Write-Host (Get-LocText -Key 'ConsoleErrWarn' -FormatArgs @($script:ErrorCount, $script:WarningCount)) -ForegroundColor White
     Write-Host "===============================================================" -ForegroundColor Cyan
 
     # Datei optional öffnen
     if ($createdFiles.Count -gt 0) {
-        $openFile = Read-Host "`nDokumentation jetzt oeffnen? (J/N)"
-        if ($openFile -eq "J" -or $openFile -eq "j") {
+        $openFile = Read-Host (Get-LocText -Key 'OpenPrompt')
+        $yes = Get-LocText -Key 'OpenPromptYes'
+        if ($openFile -and $openFile.Trim().ToUpperInvariant() -eq $yes.ToUpperInvariant()) {
             Start-Process $createdFiles[0]
         }
     }
 }
 catch {
-    Write-Log -Message "KRITISCHER FEHLER: $_" -Level "ERROR"
-    Write-Log -Message "Stack Trace: $($_.ScriptStackTrace)" -Level "ERROR"
-    Write-Host "`nKritischer Fehler! Details: $($script:LogFile)" -ForegroundColor Red
+    Write-Log -Message (Get-LocText -Key 'CriticalError' -FormatArgs @("$_")) -Level "ERROR"
+    Write-Log -Message (Get-LocText -Key 'StackTrace' -FormatArgs @($_.ScriptStackTrace)) -Level "ERROR"
+    Write-Host (Get-LocText -Key 'CriticalConsole' -FormatArgs @($script:LogFile)) -ForegroundColor Red
 }
 finally {
-    Write-Log -Message "Skript beendet um $(Get-Date -Format 'HH:mm:ss')" -Level "INFO"
+    Write-Log -Message (Get-LocText -Key 'ScriptEnded' -FormatArgs @((Get-Date -Format 'HH:mm:ss'))) -Level "INFO"
 }
 
 #endregion

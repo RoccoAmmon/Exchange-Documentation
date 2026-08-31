@@ -5,6 +5,44 @@
 
 ---
 
+## [2.0] - 2026-07-16
+
+**DE**
+- 🌐 **Sprachumschaltung Deutsch/Englisch (DE/EN)**
+  - Neuer Parameter `-Language` mit `[ValidateSet("DE","EN")]` (Standard: DE)
+  - Komplette Lokalisierung des Skripts: Konsole, Logs, Fehlermeldungen
+  - Lokalisierte Reports: HTML, PDF und Markdown in Deutsch oder Englisch
+  - GUI-Sprachumschalter (Deutsch/Englisch) direkt im Startdialog
+  - Automatischer Neustart der GUI bei Sprachwechsel
+- 🧩 **Lokalisierungs-Engine**
+  - `$script:LocUI` – Wörterbuch für feste UI-/Report-Strings (DE/EN)
+  - `$script:LocContentPairs` – 685 DE|EN-Übersetzungspaare für dynamische Inhalte
+  - `Get-LocText` – Lokalisierte feste Strings mit Format-Argumenten
+  - `ConvertTo-LocalizedText` – Übersetzt deutschen Klartext (no-op bei DE)
+  - `ConvertTo-LocalizedHtml` – Übersetzt nur HTML-Textknoten, lässt Tags/Attribute intakt
+  - `Initialize-LocalizationMap` – Baut Wörterbuch + kombinierten Regex (längste Begriffe zuerst)
+- 📁 **Lokalisierte Dateinamen** – `Exchange_Dokumentation`/`Exchange_Documentation` je nach Sprache
+- 🖥️ **GUI** – Sprach-Karte mit Deutsch/Englisch-Toggle, lokalisierte Beschriftungen
+- 🐛 **XAML-Validierung** – Platzhalter-basierte Lokalisierung, XML-gültig nach Ersetzung
+
+**EN**
+- 🌐 **German/English Language Switch (DE/EN)**
+  - New `-Language` parameter with `[ValidateSet("DE","EN")]` (default: DE)
+  - Full script localization: console, logs, error messages
+  - Localized reports: HTML, PDF and Markdown in German or English
+  - GUI language toggle (German/English) directly in the start dialog
+  - Automatic GUI restart on language switch
+- 🧩 **Localization Engine**
+  - `$script:LocUI` – dictionary for fixed UI/report strings (DE/EN)
+  - `$script:LocContentPairs` – 685 DE|EN translation pairs for dynamic content
+  - `Get-LocText` – localized fixed strings with format arguments
+  - `ConvertTo-LocalizedText` – translates plain German text (no-op for DE)
+  - `ConvertTo-LocalizedHtml` – translates only HTML text nodes, keeps tags/attributes intact
+  - `Initialize-LocalizationMap` – builds dictionary + combined regex (longest terms first)
+- 📁 **Localized filenames** – `Exchange_Dokumentation`/`Exchange_Documentation` depending on language
+- 🖥️ **GUI** – Language card with German/English toggle, localized labels
+- 🐛 **XAML validation** – placeholder-based localization, XML-valid after replacement
+
 ## [1.9] - 2026-07-15
 
 **DE**

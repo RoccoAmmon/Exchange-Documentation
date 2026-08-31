@@ -4,7 +4,7 @@
 > **EN:** Automated inventory and documentation of Microsoft Exchange On-Premises environments (Exchange 2013, 2016, 2019 & Subscription Edition)
 
 [![Status](https://img.shields.io/badge/Status-Release-brightgreen?style=flat-square)](./CHANGELOG.md)
-[![Version](https://img.shields.io/badge/Version-1.9-blue?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-2.0-blue?style=flat-square)](./CHANGELOG.md)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-blue?style=flat-square)](https://www.microsoft.com/en-us/download/details.aspx?id=50395)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
 [![GitHub Issues](https://img.shields.io/github/issues/RoccoAmmon/Exchange-Documentation?style=flat-square)](https://github.com/RoccoAmmon/Exchange-Documentation/issues)
@@ -80,6 +80,13 @@ The tool supports **Exchange Server 2013, 2016, 2019** and **Exchange Server Sub
 - Journal Rules and Message Tracking
 
 ### 📦 Neue Funktionen & Fixes / New Features & Fixes
+
+**v2.0**
+- **🌐 Sprachumschaltung DE/EN** – Komplette Lokalisierung von Skript & Reports / Full DE/EN localization of script & reports
+- **`-Language` Parameter** – `-Language EN` für englische Ausführung / for English execution
+- **GUI-Sprachumschalter** – Deutsch/Englisch-Toggle im Startdialog / German/English toggle in start dialog
+- **Lokalisierte Dateinamen** – `Exchange_Dokumentation`/`Exchange_Documentation` je nach Sprache / depending on language
+- **685 Übersetzungspaare** – Dynamische Inhalte, Logs, Sektionstitel, Statuswerte / dynamic content, logs, section titles, status values
 
 **v1.9**
 - **Exchange Build-Versionskatalog** – Umfassende Lookup-Tabelle / Build version catalog
@@ -218,6 +225,17 @@ Write-Host "✓ Downloaded: $OutFile"
   -NoGui
 ```
 
+### In englischer Sprache / In English Language
+```powershell
+# Führt das gesamte Skript und die Reports auf Englisch aus
+# Runs the entire script and reports in English
+.\Exchange_Dokumentation.ps1 `
+  -ExchangeServers @('EX01') `
+  -CompanyName 'Contoso Ltd.' `
+  -OutputPath 'C:\Reports' `
+  -Language EN
+```
+
 ### Nur spezifische Dokumentationsbereiche / Specific Documentation Sections
 ```powershell
 $sections = @(
@@ -244,6 +262,7 @@ $sections = @(
 | `OutputPath` | string | C:\ExchangeDoku | Output directory for documents |
 | `OutputFormats` | string[] | @('HTML') | Output formats: HTML, PDF, Markdown |
 | `Sections` | string[] | (all) | Documentation sections to include |
+| `Language` | string | "DE" | Output language: `DE` (German) or `EN` (English) |
 | `ShowGui` | switch | - | Force GUI |
 | `NoGui` | switch | - | Suppress GUI |
 
