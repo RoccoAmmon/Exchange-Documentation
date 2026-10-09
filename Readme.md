@@ -7,9 +7,8 @@
 [![Version](https://img.shields.io/badge/Version-2.0-blue?style=flat-square)](./CHANGELOG.md)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-blue?style=flat-square)](https://www.microsoft.com/en-us/download/details.aspx?id=50395)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
-[![GitHub Issues](https://img.shields.io/github/issues/RoccoAmmon/Exchange-Documentation?style=flat-square)](https://github.com/RoccoAmmon/Exchange-Documentation/issues)
-[![Downloads](https://img.shields.io/github/downloads/RoccoAmmon/Exchange-Documentation/total?style=flat-square&label=Downloads&color=orange)](https://github.com/RoccoAmmon/Exchange-Documentation/releases)
-[![Latest Release Downloads](https://img.shields.io/github/downloads/RoccoAmmon/Exchange-Documentation/latest/total?style=flat-square&label=Latest)](https://github.com/RoccoAmmon/Exchange-Documentation/releases/latest)
+[![GitLab Issues](https://img.shields.io/gitlab/issues/open/RoccoAmmon/Exchange-Documentation?style=flat-square)](https://gitlab.com/RoccoAmmon/Exchange-Documentation/-/issues)
+[![Releases](https://img.shields.io/gitlab/v/release/RoccoAmmon/Exchange-Documentation?style=flat-square&label=Release&color=orange)](https://gitlab.com/RoccoAmmon/Exchange-Documentation/-/releases)
 
 ---
 
@@ -154,7 +153,7 @@ The tool supports **Exchange Server 2013, 2016, 2019** and **Exchange Server Sub
 
 ```powershell
 # 1. Repository klonen / clone repository
-git clone https://github.com/RoccoAmmon/Exchange-Documentation.git
+git clone https://gitlab.com/RoccoAmmon/Exchange-Documentation.git
 cd Exchange-Documentation
 
 # 2. Execution policy anpassen (falls nötig) / adjust if needed
@@ -172,10 +171,10 @@ Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope CurrentUser
 
 | Methode / Method | Link | Info |
 |---|---|---|
-| **🔗 Raw-Download (Main)** | [Exchange_Documentation.ps1](https://raw.githubusercontent.com/RoccoAmmon/Exchange-Documentation/main/Exchange_Documentation.ps1) | Latest version directly from repository |
-| **📦 Git Clone** | `git clone https://github.com/RoccoAmmon/Exchange-Documentation.git` | Full repository with version control |
-| **📋 Releases** | [All Releases](https://github.com/RoccoAmmon/Exchange-Documentation/releases) | Published versions |
-| **⬇️ ZIP Download** | [Download ZIP](https://github.com/RoccoAmmon/Exchange-Documentation/archive/refs/heads/main.zip) | Full repository as ZIP |
+| **🔗 Raw-Download (Main)** | [Exchange_Documentation.ps1](https://gitlab.com/RoccoAmmon/Exchange-Documentation/-/raw/main/Exchange_Documentation.ps1) | Latest version directly from repository |
+| **📦 Git Clone** | `git clone https://gitlab.com/RoccoAmmon/Exchange-Documentation.git` | Full repository with version control |
+| **📋 Releases** | [All Releases](https://gitlab.com/RoccoAmmon/Exchange-Documentation/-/releases) | Published versions |
+| **⬇️ ZIP Download** | [Download ZIP](https://gitlab.com/RoccoAmmon/Exchange-Documentation/-/archive/main/Exchange-Documentation-main.zip) | Full repository as ZIP |
 
 > **💡 Recommendation:** Use `git clone` for regular updates and best practices!
 
@@ -183,7 +182,7 @@ Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope CurrentUser
 
 ```powershell
 # Download and save directly
-$ScriptUrl = "https://raw.githubusercontent.com/RoccoAmmon/Exchange-Documentation/main/Exchange_Documentation.ps1"
+$ScriptUrl = "https://gitlab.com/RoccoAmmon/Exchange-Documentation/-/raw/main/Exchange_Documentation.ps1"
 $OutFile = "C:\Scripts\Exchange_Documentation.ps1"
 Invoke-WebRequest -Uri $ScriptUrl -OutFile $OutFile
 Write-Host "✓ Downloaded: $OutFile"
@@ -194,7 +193,7 @@ Write-Host "✓ Downloaded: $OutFile"
 **DE:** Die aktuellen Zugriffs- und Download-Statistiken finden Sie:
 **EN:** Current traffic and download statistics:
 - **Badges above:** Live statistics for total downloads
-- **[GitHub Insights](https://github.com/RoccoAmmon/Exchange-Documentation/graphs/traffic):** Detailed traffic and download analytics
+- **[GitLab Insights](https://gitlab.com/RoccoAmmon/Exchange-Documentation/-/insights):** Detailed traffic and download analytics
 
 ---
 
@@ -405,10 +404,10 @@ Start-Process powershell -ArgumentList "& '.\Exchange_Dokumentation.ps1'" -Verb 
 
 ## 📚 Wiki & Dokumentation
 
-Ausführliche Dokumentation im **GitHub Wiki**:
-- 📖 **[Installation](https://github.com/RoccoAmmon/Exchange-Documentation/wiki/Installation)** - Schritt-für-Schritt Anleitung
-- 🎮 **[Bedienung](https://github.com/RoccoAmmon/Exchange-Documentation/wiki/Bedienung)** - Parameter & Beispiele
-- ⚙️ **[Konfiguration](https://github.com/RoccoAmmon/Exchange-Documentation/wiki/Konfiguration)** - Erweiterte Einstellungen
+Ausführliche Dokumentation im **GitLab Wiki**:
+- 📖 **[Installation](https://gitlab.com/RoccoAmmon/Exchange-Documentation/-/wikis/Installation)** - Schritt-für-Schritt Anleitung
+- 🎮 **[Bedienung](https://gitlab.com/RoccoAmmon/Exchange-Documentation/-/wikis/Bedienung)** - Parameter & Beispiele
+- ⚙️ **[Konfiguration](https://gitlab.com/RoccoAmmon/Exchange-Documentation/-/wikis/Konfiguration)** - Erweiterte Einstellungen
 
 ---
 
@@ -453,17 +452,17 @@ Dieses Projekt ist unter der **MIT-Lizenz** lizenziert – siehe [LICENSE](LICEN
 
 **Rocco Ammon**
 
-- 🔗 GitHub: [@RoccoAmmon](https://github.com/RoccoAmmon)
-- 📧 Kontakt via GitHub Issues
-- 🌍 Repository: [Exchange-Documentation](https://github.com/RoccoAmmon/Exchange-Documentation)
+- 🔗 GitLab: [@RoccoAmmon](https://gitlab.com/RoccoAmmon)
+- 📧 Kontakt via GitLab Issues
+- 🌍 Repository: [Exchange-Documentation](https://gitlab.com/RoccoAmmon/Exchange-Documentation)
 
 ---
 
 ## 📞 Support
 
-- 📋 **Issues**: [GitHub Issues](https://github.com/RoccoAmmon/Exchange-Documentation/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/RoccoAmmon/Exchange-Documentation/discussions)
-- 📖 **Wiki**: [GitHub Wiki](https://github.com/RoccoAmmon/Exchange-Documentation/wiki)
+- 📋 **Issues**: [GitLab Issues](https://gitlab.com/RoccoAmmon/Exchange-Documentation/-/issues)
+- 💬 **Discussions**: [GitLab Issues](https://gitlab.com/RoccoAmmon/Exchange-Documentation/-/issues)
+- 📖 **Wiki**: [GitLab Wiki](https://gitlab.com/RoccoAmmon/Exchange-Documentation/-/wikis)
 
 ---
 
