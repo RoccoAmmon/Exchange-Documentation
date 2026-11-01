@@ -4,7 +4,7 @@
 > **EN:** Automated inventory and documentation of Microsoft Exchange On-Premises environments (Exchange 2013, 2016, 2019 & Subscription Edition)
 
 [![Status](https://img.shields.io/badge/Status-Release-brightgreen?style=flat-square)](./CHANGELOG.md)
-[![Version](https://img.shields.io/badge/Version-2.0-blue?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-2.1-blue?style=flat-square)](./CHANGELOG.md)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-blue?style=flat-square)](https://www.microsoft.com/en-us/download/details.aspx?id=50395)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
 [![GitLab Issues](https://img.shields.io/gitlab/issues/open/RoccoAmmon/Exchange-Documentation?style=flat-square)](https://gitlab.com/RoccoAmmon/Exchange-Documentation/-/issues)
@@ -79,6 +79,15 @@ The tool supports **Exchange Server 2013, 2016, 2019** and **Exchange Server Sub
 - Journal Rules and Message Tracking
 
 ### 📦 Neue Funktionen & Fixes / New Features & Fixes
+
+**v2.1**
+- **🔄 Automatisches Self-Update** – Prüfung gegen GitLab Releases + In-Skript-Update mit SHA256/Größe/Syntax/Versions-Verifikation, Backup und Rollback / Automatic self-update against GitLab Releases with verification, backup and rollback
+- ** GUI-Update-Badge** – Klick = Update installieren, Rechtsklick = Release-Seite / Click = install update, right-click = release page
+- **`-NoUpdateCheck` / `-NoSelfUpdate`** – Update-Funktionen gezielt deaktivieren / disable update features
+- **Schneller Erreichbarkeits-Check** – Parallele Prüfung mit TCP-Fallback (Port 135/443) und 15s-Timeout, kein Hängen mehr bei blockiertem ICMP / Parallel check with TCP fallback, no more hanging on blocked ICMP
+- **957 Übersetzungspaare** – Vollständige DE/EN-Lokalisierung ohne Rest-Lücken / Full DE/EN localization with zero gaps
+- **Build-Katalog aktuell** – SE/2019/2016 bis Oct26SU inkl. korrekter Download-Links / catalog up to Oct26SU with correct download links
+- **Robusterer MS-Learn-Parser** – Sprachunabhängig, abschnittsweise, mit Regressionsschutz / language-independent section parsing with regression guard
 
 **v2.0**
 - **🌐 Sprachumschaltung DE/EN** – Komplette Lokalisierung von Skript & Reports / Full DE/EN localization of script & reports

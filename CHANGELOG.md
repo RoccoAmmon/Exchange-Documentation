@@ -5,6 +5,70 @@
 
 ---
 
+## [2.1] - 2026-11-01
+
+**DE**
+- 🔄 **Automatisches Self-Update**
+  - Versionsprüfung gegen die GitLab-Releases-API (asynchron, blockiert den Start nicht)
+  - Update-Badge in der GUI: **Klick = Update installieren**, **Rechtsklick = Release-Seite**
+  - Konsolen-Update mit `j`-Bestätigung vor dem Datenabgleich
+  - Sicherheitsverifikation des Update-Pakets: SHA256, Dateigröße, PowerShell-Syntax, Versionsnummer
+  - Automatisches Backup der aktuellen Datei + Rollback-Hilfsprozess bei Fehlern
+  - Neustart mit identischen Parametern nach dem Update
+  - Neue Parameter `-NoUpdateCheck` und `-NoSelfUpdate` zum Deaktivieren
+- 🌐 **Vollständige DE/EN-Lokalisierung abgeschlossen**
+  - 957 Übersetzungspaare (vorher 685), 0 verbleibende deutsche Stellen im EN-Modus
+  - Log- und Dokument-Ausgaben zu 100 % übersetzt (356/356 Log, 314/314 DOC)
+- 🚀 **Erreichbarkeits-Check überarbeitet**
+  - Parallele Prüfung aller Server (Jobs) statt sequenzieller ICMP-Pings
+  - TCP-Fallback (Port 135/443) wenn ICMP blockiert ist
+  - Hartes 15s-Gesamt-Timeout – kein Hängenbleiben mehr
+  - Ergebnis mit Prüfmethode (ICMP/TCP/135/TCP/443)
+- 📦 **Exchange Build-Katalog aktuell** (Stand Oct26SU)
+  - SE 15.2.2562.56, 2019 CU15 15.2.1748.55, 2019 CU14 15.2.1544.50, 2016 CU23 15.1.2507.77
+  - Korrekte Microsoft-Download-Links (KB-Prüfung aller Einträge)
+  - Fehlende Builds Aug26/Sep26/Sep26v2/Oct26 ergänzt (114 Einträge)
+- 🔧 **MS-Learn-Online-Parser repariert** (war nie funktionsfähig)
+  - Abschnittsweise Auswertung über h2-IDs statt Header-Text-Matching
+  - Sprachunabhängig (de/en), `&nbsp;`- und `<br>`-tolerant
+  - Regressionsschutz: Online-Wert wird nur übernommen wenn er wirklich neuer ist
+- 🐛 **Fehlerbehebungen**
+  - `PSRemotingJob.Remove()`-Fehler beim Erreichbarkeits-Check behoben
+  - ADSI-Admin-Gruppen-Lookup über SID `S-1-5-32-544` mit Fallbacks
+  - BSI RSS-Feed robust (`-UseBasicParsing -TimeoutSec`)
+  - PDF-Export hart gemacht (Edge/Chrome-Headless-Fallback, Retry, Polling)
+
+**EN**
+- 🔄 **Automatic Self-Update**
+  - Version check against GitLab Releases API (async, non-blocking)
+  - GUI update badge: **click = install update**, **right-click = release page**
+  - Console update with `j` confirmation before data collection
+  - Update package verification: SHA256, file size, PowerShell syntax, version number
+  - Automatic backup of current file + rollback helper process on failure
+  - Restart with identical parameters after update
+  - New `-NoUpdateCheck` and `-NoSelfUpdate` parameters to disable
+- 🌐 **Complete DE/EN localization finished**
+  - 957 translation pairs (was 685), zero remaining German strings in EN mode
+  - Log and document output 100% translated (356/356 log, 314/314 doc)
+- 🚀 **Reachability check reworked**
+  - Parallel check of all servers (jobs) instead of sequential ICMP pings
+  - TCP fallback (port 135/443) when ICMP is blocked
+  - Hard 15s total timeout – no more hanging
+  - Result includes check method (ICMP/TCP 135/TCP 443)
+- 📦 **Exchange build catalog up to date** (as of Oct26SU)
+  - SE 15.2.2562.56, 2019 CU15 15.2.1748.55, 2019 CU14 15.2.1544.50, 2016 CU23 15.1.2507.77
+  - Correct Microsoft download links (KB verified for all entries)
+  - Missing Aug26/Sep26/Sep26v2/Oct26 builds added (114 entries)
+- 🔧 **MS Learn online parser fixed** (was never functional)
+  - Section-based evaluation via h2 IDs instead of header text matching
+  - Language independent (de/en), `&nbsp;` and `<br>` tolerant
+  - Regression guard: online value only accepted if it is actually newer
+- 🐛 **Bug fixes**
+  - `PSRemotingJob.Remove()` error during reachability check fixed
+  - ADSI admin group lookup via SID `S-1-5-32-544` with fallbacks
+  - BSI RSS feed hardened (`-UseBasicParsing -TimeoutSec`)
+  - PDF export hardened (Edge/Chrome headless fallback, retry, polling)
+
 ## [2.0] - 2026-07-16
 
 **DE**

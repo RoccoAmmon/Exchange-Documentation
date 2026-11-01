@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Exchange On-Premises Dokumentations-Skript (v2.0 - Exchange 2013/2016/2019 & SE Support, DE/EN)
+    Exchange On-Premises Dokumentations-Skript (v2.1 - Exchange 2013/2016/2019 & SE Support, DE/EN)
 .DESCRIPTION
     Erstellt eine umfassende HTML-Dokumentation der gesamten Exchange On-Premises Umgebung.
     Unterstützt Exchange Server 2019 und Exchange Server Subscription Edition (SE).
@@ -9,6 +9,17 @@
     WICHTIG: Diese Version verwendet CIM-Sessions mit automatischem DCOM-Fallback,
     sodass das Skript auch funktioniert, wenn WinRM (PowerShell Remoting) nicht
     korrekt konfiguriert ist.
+
+    NEU in v2.1 (Self-Update & Stabilität):
+    - Automatisches Self-Update – Prüfung gegen GitLab Releases + In-Skript-Update
+      mit SHA256/Größe/Syntax/Versions-Verifikation, Backup und Rollback
+    - Update-Badge in der GUI (Klick = Update installieren, Rechtsklick = Release-Seite)
+    - Parameter -NoUpdateCheck und -NoSelfUpdate zum Deaktivieren
+    - Erreichbarkeits-Check parallelisiert (Jobs) mit TCP-Fallback (Port 135/443)
+      und hartem 15s-Timeout – kein Hängenbleiben mehr bei blockiertem ICMP
+    - Vollständige DE/EN-Lokalisierung (957 Übersetzungspaare, 0 Rest-Lücken)
+    - Exchange Build-Katalog aktualisiert (SE/2019/2016 bis Oct26SU) inkl. korrekter
+      Download-Links; robuster MS-Learn-Parser (sprachunabhängig, abschnittsweise)
 
     NEU in v2.0 (Mehrsprachigkeit / Multi-Language):
     - Sprachschalter -Language DE|EN für Skript UND Reports
@@ -177,6 +188,13 @@
     Sprache für GUI, Konsolenausgaben, Logs und Reports. Gültige Werte: DE, EN.
     Standard: DE
 
+.PARAMETER NoUpdateCheck
+    Unterdrückt den Update-Check gegen die GitLab-Releases-API (Airgap/Offline).
+
+.PARAMETER NoSelfUpdate
+    Verbietet das Selbst-Update (Datei wird zentral verteilt / per GPO bereitgestellt).
+    Der Update-Hinweis bleibt sichtbar, es wird aber nichts installiert.
+
 .EXAMPLE
     .\Exchange_Dokumentation.ps1 -ExchangeServers @("EX01","EX02") -CompanyName "Contoso GmbH"
 
@@ -188,10 +206,12 @@
 
 .NOTES
     Autor:           Rocco Ammon
-    Version:         2.0
+    Version:         2.1
     Erstellt:        2026-03-05
-    Letzte Änderung: 2026-08-31
-    Änderungen:      v2.0 - Mehrsprachigkeit (DE/EN) für Skript, GUI und Reports
+    Letzte Änderung: 2026-11-01
+    Änderungen:      v2.1 - Self-Update (GitLab Releases), Update-Badge, paralleler
+                     Erreichbarkeits-Check, DE/EN-Vollständigkeit, Build-Katalog Oct26SU
+                     v2.0 - Mehrsprachigkeit (DE/EN) für Skript, GUI und Reports
                      v1.7 - Erweiterte System- & Sicherheitschecks:
                           • Windows Features & Rollen (installierte Server Rollen)
                           • .NET Framework Version & DLLs (Release-Key, Assembly-Versionen)
@@ -263,7 +283,13 @@ param(
     [switch]$ShowGui,
 
     [Parameter(Mandatory = $false, HelpMessage = "GUI unterdrücken und direkt mit Parametern starten")]
-    [switch]$NoGui
+    [switch]$NoGui,
+
+    [Parameter(Mandatory = $false, HelpMessage = "Update-Check gegen die GitLab-Releases-API unterdruecken (Airgap/Offline)")]
+    [switch]$NoUpdateCheck,
+
+    [Parameter(Mandatory = $false, HelpMessage = "Selbst-Update verbieten (Datei wird zentral verteilt / per GPO bereitgestellt)")]
+    [switch]$NoSelfUpdate
 )
 
 #region ============================================================
@@ -296,9 +322,9 @@ $script:LocUI = @{
     DetectedEdition      = @{ DE = "Erkannte Edition"; EN = "Detected edition" }
     VersionLabel         = @{ DE = "Version"; EN = "Version" }
     VersionSuffix        = @{ DE = "2.0 (Exchange 2013/2016/2019 &amp; SE / CIM-DCOM Fallback)"; EN = "2.0 (Exchange 2013/2016/2019 &amp; SE / CIM-DCOM fallback)" }
-    GeneratorMeta        = @{ DE = "Exchange Dokumentations-Skript v2.0"; EN = "Exchange Documentation Script v2.0" }
+    GeneratorMeta        = @{ DE = "Exchange Dokumentations-Skript v2.1"; EN = "Exchange Documentation Script v2.1" }
     FooterCreated        = @{ DE = "Erstellt"; EN = "Created" }
-    FooterTool           = @{ DE = "PowerShell Dokumentation v2.0"; EN = "PowerShell Documentation v2.0" }
+    FooterTool           = @{ DE = "PowerShell Dokumentation v2.1"; EN = "PowerShell Documentation v2.1" }
     HtmlLang             = @{ DE = "de"; EN = "en" }
     NoDataDefault        = @{ DE = "Keine Daten verfügbar."; EN = "No data available." }
     BuildHtmlDoc         = @{ DE = "=== Erstelle HTML-Dokument ==="; EN = "=== Building HTML document ===" }
@@ -306,7 +332,7 @@ $script:LocUI = @{
     GenHtml              = @{ DE = "=== Generiere HTML-Dokument ==="; EN = "=== Generating HTML document ===" }
     GenPdf               = @{ DE = "=== Generiere PDF-Dokument ==="; EN = "=== Generating PDF document ===" }
     GenMd                = @{ DE = "=== Generiere Markdown-Dokument ==="; EN = "=== Generating Markdown document ===" }
-    StartBanner          = @{ DE = "Exchange Dokumentation gestartet (v2.0 - 2013/2016/2019/SE)"; EN = "Exchange documentation started (v2.0 - 2013/2016/2019/SE)" }
+    StartBanner          = @{ DE = "Exchange Dokumentation gestartet (v2.1 - 2013/2016/2019/SE)"; EN = "Exchange documentation started (v2.1 - 2013/2016/2019/SE)" }
     TargetServers        = @{ DE = "Zielserver: {0}"; EN = "Target servers: {0}" }
     OutputPathLog        = @{ DE = "Ausgabepfad: {0}"; EN = "Output path: {0}" }
     OutputFormatsLog     = @{ DE = "Ausgabeformate: {0}"; EN = "Output formats: {0}" }
@@ -317,7 +343,7 @@ $script:LocUI = @{
     ExchangeToolsThrow   = @{ DE = "Exchange Management Tools nicht verfügbar."; EN = "Exchange Management Tools not available." }
     CheckReachability    = @{ DE = "=== Prüfe Erreichbarkeit der Server ==="; EN = "=== Checking server reachability ===" }
     ServerUnreachable    = @{ DE = "Server {0} ist NICHT erreichbar!"; EN = "Server {0} is NOT reachable!" }
-    ServerReachable      = @{ DE = "Server {0} ist erreichbar (Ping OK)."; EN = "Server {0} is reachable (ping OK)." }
+    ServerReachable      = @{ DE = "Server {0} ist erreichbar ({1})."; EN = "Server {0} is reachable ({1})." }
     PingFailed           = @{ DE = "Ping-Test für {0} fehlgeschlagen: {1}"; EN = "Ping test for {0} failed: {1}" }
     StartCollection      = @{ DE = "=== Starte Datensammlung ({0} Sektionen) ==="; EN = "=== Starting data collection ({0} sections) ===" }
     SectionLog           = @{ DE = "Sektion: {0} [{1}]"; EN = "Section: {0} [{1}]" }
@@ -326,7 +352,7 @@ $script:LocUI = @{
     FileLog              = @{ DE = "Datei: {0}"; EN = "File: {0}" }
     LogFileLog           = @{ DE = "Log-Datei: {0}"; EN = "Log file: {0}" }
     ErrWarnLog           = @{ DE = "Fehler: {0} | Warnungen: {1}"; EN = "Errors: {0} | Warnings: {1}" }
-    ConsoleDone          = @{ DE = "  Exchange Dokumentation abgeschlossen! (v2.0 - 2013/2016/2019/SE)"; EN = "  Exchange documentation completed! (v2.0 - 2013/2016/2019/SE)" }
+    ConsoleDone          = @{ DE = "  Exchange Dokumentation abgeschlossen! (v2.1 - 2013/2016/2019/SE)"; EN = "  Exchange documentation completed! (v2.1 - 2013/2016/2019/SE)" }
     ConsoleFile          = @{ DE = "  Datei: {0}"; EN = "  File: {0}" }
     ConsoleLogFile       = @{ DE = "  Log-Datei:  {0}"; EN = "  Log file:   {0}" }
     ConsoleErrWarn       = @{ DE = "  Fehler:     {0} | Warnungen: {1}"; EN = "  Errors:     {0} | Warnings: {1}" }
@@ -339,7 +365,7 @@ $script:LocUI = @{
     NoServersGiven       = @{ DE = "Keine Exchange-Server angegeben. Bitte -ExchangeServers verwenden oder die GUI nutzen."; EN = "No Exchange servers specified. Please use -ExchangeServers or the GUI." }
     CancelledByUser      = @{ DE = "Abgebrochen durch Benutzer (GUI)."; EN = "Cancelled by user (GUI)." }
     # --- GUI ---
-    GuiWindowTitle       = @{ DE = "Exchange Server Dokumentation v2.0"; EN = "Exchange Server Documentation v2.0" }
+    GuiWindowTitle       = @{ DE = "Exchange Server Dokumentation v2.1"; EN = "Exchange Server Documentation v2.1" }
     GuiHeaderTitle       = @{ DE = "Exchange Server Dokumentation"; EN = "Exchange Server Documentation" }
     GuiHeaderSubtitle    = @{ DE = "System-Checks · TLS/SSL · Multi-Format Export · Mehrsprachig (DE/EN)"; EN = "System checks · TLS/SSL · Multi-format export · Multilingual (DE/EN)" }
     GuiExchangeServer    = @{ DE = "Exchange Server"; EN = "Exchange Server" }
@@ -361,6 +387,36 @@ $script:LocUI = @{
     GuiXamlError         = @{ DE = "FEHLER beim Laden der XAML: {0}"; EN = "ERROR while loading the XAML: {0}" }
     GuiWpfError          = @{ DE = "FEHLER: WPF-Assemblies konnten nicht geladen werden: {0}"; EN = "ERROR: WPF assemblies could not be loaded: {0}" }
     GuiControlError      = @{ DE = "FEHLER beim Zugriff auf GUI-Steuerelemente: {0}"; EN = "ERROR while accessing GUI controls: {0}" }
+    # --- Update / Selbst-Update ---
+    UpdAvailable         = @{ DE = "  [i] Update verfügbar: {0} (aktuell v{1})"; EN = "  [i] Update available: {0} (current v{1})" }
+    UpdPrompt            = @{ DE = "Update jetzt installieren? Die laufende Datei wird ersetzt und das Skript startet neu. (j/n)"; EN = "Install update now? The current file will be replaced and the script restarts. (y/n)" }
+    UpdInstallInfo       = @{ DE = "  [i] Update wird geladen und geprüft ..."; EN = "  [i] Downloading and verifying update ..." }
+    UpdPreparedInfo      = @{ DE = "  [OK] Update vorbereitet - das Skript startet in wenigen Sekunden neu."; EN = "  [OK] Update prepared - the script will restart in a few seconds." }
+    UpdNotPossible       = @{ DE = "  [!] Update nicht möglich:"; EN = "  [!] Update not possible:" }
+    UpdReleasePage       = @{ DE = "  [i] Release-Seite: "; EN = "  [i] Release page: " }
+    UpdBadgeText         = @{ DE = "Update verfügbar: {0}"; EN = "Update available: {0}" }
+    UpdBadgeTip          = @{ DE = "Klicken: Update installieren. Rechtsklick: Release-Seite öffnen."; EN = "Click: install update. Right-click: open release page." }
+    UpdDisabled          = @{ DE = "Das Selbst-Update ist deaktiviert (-NoSelfUpdate)."; EN = "Self-update is disabled (-NoSelfUpdate)." }
+    UpdConfirm           = @{ DE = "Update installieren? Die laufende Datei wird ersetzt (Backup neben dem Skript) und das Skript startet neu."; EN = "Install update? The current file will be replaced (backup next to the script) and the script restarts." }
+    UpdWorking           = @{ DE = "Update wird installiert ..."; EN = "Installing update ..." }
+    UpdPrepared          = @{ DE = "Das Update ist vorbereitet. Das Skript startet in wenigen Sekunden neu; bitte die Auswahl erneut treffen."; EN = "The update is prepared. The script will restart in a few seconds; please repeat your selection." }
+    UpdFailed            = @{ DE = "Update nicht möglich:"; EN = "Update not possible:" }
+    UpdReasonDisabled    = @{ DE = "Selbst-Update ist deaktiviert (-NoSelfUpdate)"; EN = "Self-update is disabled (-NoSelfUpdate)" }
+    UpdReasonNoPath      = @{ DE = "Skriptpfad nicht ermittelbar"; EN = "Script path cannot be determined" }
+    UpdReasonNoDir       = @{ DE = "Zielordner nicht beschreibbar: {0}"; EN = "Target folder not writable: {0}" }
+    UpdReasonDownload    = @{ DE = "Download fehlgeschlagen: {0}"; EN = "Download failed: {0}" }
+    UpdReasonPackage     = @{ DE = "Paket abgelehnt: {0}"; EN = "Package rejected: {0}" }
+    UpdReasonBackup      = @{ DE = "Backup fehlgeschlagen: {0}"; EN = "Backup failed: {0}" }
+    UpdReasonHelper      = @{ DE = "Helfer konnte nicht vorbereitet werden: {0}"; EN = "Helper could not be prepared: {0}" }
+    UpdReasonHelperStart = @{ DE = "Helfer konnte nicht gestartet werden: {0}"; EN = "Helper could not be started: {0}" }
+    UpdRFileMissing      = @{ DE = "Datei fehlt"; EN = "File missing" }
+    UpdREmpty            = @{ DE = "Datei ist leer"; EN = "File is empty" }
+    UpdRSize             = @{ DE = "Größe weicht ab (erwartet {0}, erhalten {1})"; EN = "Size mismatch (expected {0}, got {1})" }
+    UpdRHash             = @{ DE = "SHA-256 weicht ab"; EN = "SHA-256 mismatch" }
+    UpdRSyntax           = @{ DE = "Syntaxfehler ({0}): {1}"; EN = "Syntax errors ({0}): {1}" }
+    UpdRNoVersion        = @{ DE = "Versionsangabe nicht gefunden"; EN = "Version information not found" }
+    UpdRBadVersion       = @{ DE = "Versionsangabe unlesbar"; EN = "Version information unreadable" }
+    UpdRNotNewer         = @{ DE = "Version {0} ist nicht neuer als {1}"; EN = "Version {0} is not newer than {1}" }
 }
 
 function Get-LocText {
@@ -996,6 +1052,26 @@ FIP-FS / ScanEngine.ini nicht gefunden|FIP-FS / ScanEngine.ini not found
 Get-MailboxServer nicht möglich|Get-MailboxServer not possible
 MS Learn nicht erreichbar|MS Learn not reachable
 RSS-Feed nicht erreichbar.|RSS feed not reachable.
+Hardware-Info fÃ¼r Server:|Hardware info for server:
+CIM-Session Ã¼ber WsMan fÃ¼r|CIM session via WsMan for
+fÃ¼r Server:|for server:
+fÃ¼r Server|for server
+fÃ¼r|for
+Installierte Software fÃ¼r Server:|Installed software for server:
+Firewall-Regeln fÃ¼r Server:|Firewall rules for server:
+Disk Space fÃ¼r Server:|Disk space for server:
+CPU Throttling Check fÃ¼r Server:|CPU throttling check for server:
+RAM-Check fÃ¼r Server:|RAM check for server:
+Power Plan fÃ¼r Server:|Power plan for server:
+SMBv1 Status fÃ¼r Server:|SMBv1 status for server:
+Exchange Services fÃ¼r Server:|Exchange services for server:
+Netzwerk-Config fÃ¼r Server:|Network config for server:
+LDAP Connectivity fÃ¼r Server:|LDAP connectivity for server:
+RPC Port fÃ¼r Server:|RPC port for server:
+MAPI Connectivity fÃ¼r Server:|MAPI connectivity for server:
+Antivirus Exclusions fÃ¼r Server:|Antivirus exclusions for server:
+Kein Prozess ist am anderen Ende der Pipe|No process at the other end of the pipe
+Interner Win32-ERROR|Internal Win32 error
 Ausgabeverzeichnis wählen|Choose output directory
 # === Log-Meldungen ===
 === Prüfe aktuelle Security CVEs (BSI RSS-Feed) ===|=== Checking current security CVEs (BSI RSS feed) ===
@@ -1010,6 +1086,9 @@ Ausgabeverzeichnis wählen|Choose output directory
 === Sammle Exchange Server Übersicht ===|=== Collecting Exchange server overview ===
 === Sammle installierte Antivirenlösungen ===|=== Collecting installed antivirus solutions ===
 Online-Check für Exchange Builds abgeschlossen.|Online check for Exchange builds completed.
+MS Build-Seite geparst – Online-Wert übernommen:|MS build page parsed – online value accepted:
+MS Build-Seite geparst – Online-Wert nicht neuer als Katalog, Katalog beibehalten:|MS build page parsed – online value not newer than catalog, keeping catalog:
+MS Build-Seite geparst – keine passende Zeile gefunden, statischer Katalog bleibt aktiv.|MS build page parsed – no matching row found, static catalog remains active.
 Exchange Management Shell über RemoteExchange.ps1 geladen.|Exchange Management Shell loaded via RemoteExchange.ps1.
 Exchange Management Tools nicht gefunden. Bitte auf einem Exchange-Server ausführen.|Exchange Management Tools not found. Please run on an Exchange server.
 CIM-Association lieferte keine Mitglieder, versuche Invoke-Command...|CIM association returned no members, trying Invoke-Command...
@@ -1114,6 +1193,258 @@ Snap-In nicht direkt verfügbar. Versuche Exchange Management Shell zu laden...|
 Version konnte nicht extrahiert werden - Fallback auf Build-Ranges|Version could not be extracted - falling back to build ranges
 Versuche Get-NetAdapter lokal...|Trying Get-NetAdapter locally...
 Win32_Group fehlgeschlagen, versuche net localgroup per Invoke-Command...|Win32_Group failed, trying net localgroup via Invoke-Command...
+# === Restliche Log-Meldungen (auto-generiert) ===
+.NET Framework für $server fehlgeschlagen: $_|.NET Framework for $server failed: $_
+.NET Framework für Server: $server|.NET Framework for server: $server
+Allgemeiner Fehler bei Firewall-Info für ${server}: $_|General error in firewall info for ${server}: $_
+Allgemeiner Fehler bei Hardware-Info für ${server}: $_|General error in hardware info for ${server}: $_
+Allgemeiner Fehler bei TLS/SSL-Konfiguration für ${server}: $_|General error in TLS/SSL configuration for ${server}: $_
+Antivirus Exclusions für Server: $server|Antivirus exclusions for server: $server
+Antivirus-Check für $server fehlgeschlagen: $_|Antivirus check for $server failed: $_
+Antivirus-Check für Server: $server|Antivirus check for server: $server
+AppPool Abfrage für $server fehlgeschlagen: $_|AppPool query for $server failed: $_
+Auch DCOM fehlgeschlagen für ${ComputerName}: $($_.Exception.Message)|DCOM also failed for ${ComputerName}: $($_.Exception.Message)
+AutoReseed für $server fehlgeschlagen: $_|AutoReseed for $server failed: $_
+AutoReseed-Prüfung für Server: $server|AutoReseed check for server: $server
+AV-Exclusion Check für $server fehlgeschlagen: $_|AV exclusion check for $server failed: $_
+Browser-Headless PDF-Export fehlgeschlagen ($browser, Versuch $attempt): $_|Headless browser PDF export failed ($browser, attempt $attempt): $_
+CIM-Session über DCOM für $ComputerName...|CIM session via DCOM for $ComputerName...
+CIM-Session über WsMan für $ComputerName...|CIM session via WsMan for $ComputerName...
+Cipher Suite Abfrage fehlgeschlagen für ${server}: $_|Cipher suite query failed for ${server}: $_
+Component State für $server fehlgeschlagen: $_|Component state for $server failed: $_
+Component States für Server: $server|Component states for server: $server
+CPU Throttling Check für Server: $server|CPU throttling check for server: $server
+CPU Throttling für $server fehlgeschlagen: $_|CPU throttling for $server failed: $_
+CPU-Abfrage fehlgeschlagen für ${server}: $_|CPU query failed for ${server}: $_
+Credential Guard Check für Server: $server|Credential Guard check for server: $server
+Credential Guard für $server fehlgeschlagen: $_|Credential Guard for $server failed: $_
+Dienste-Abfrage fehlgeschlagen für ${server}: $_|Services query failed for ${server}: $_
+Disk Space für Server: $server|Disk space for server: $server
+Disk-Abfrage für $server fehlgeschlagen: $_|Disk query for $server failed: $_
+DNS-Abfragen für: $domainName|DNS queries for: $domainName
+DNS-Check fehlgeschlagen für ${domainName}: $_|DNS check failed for ${domainName}: $_
+Exchange Registry-Abfrage fehlgeschlagen für ${server}: $_|Exchange registry query failed for ${server}: $_
+Exchange Services für Server: $server|Exchange services for server: $server
+Fehler bei .NET Framework für ${server}: $_|Error in .NET Framework for ${server}: $_
+Fehler bei Antivirus für ${server}: $_|Error in antivirus for ${server}: $_
+Fehler bei AutoReseed für ${server}: $_|Error in AutoReseed for ${server}: $_
+Fehler bei AV Info für ${server}: $_|Error in AV info for ${server}: $_
+Fehler bei Component States für ${server}: $_|Error in component states for ${server}: $_
+Fehler bei CPU Throttling für ${server}: $_|Error in CPU throttling for ${server}: $_
+Fehler bei Credential Guard für ${server}: $_|Error in Credential Guard for ${server}: $_
+Fehler bei Disk Space Info für ${server}: $_|Error in disk space info for ${server}: $_
+Fehler bei Event Logs für ${server}: $_|Error in event logs for ${server}: $_
+Fehler bei Exchange Service Status für ${server}: $_|Error in Exchange service status for ${server}: $_
+Fehler bei FIP-FS für ${server}: $_|Error in FIP-FS for ${server}: $_
+Fehler bei HTTP Proxy für ${server}: $_|Error in HTTP proxy for ${server}: $_
+Fehler bei IIS Settings für ${server}: $_|Error in IIS settings for ${server}: $_
+Fehler bei LDAP Info für ${server}: $_|Error in LDAP info for ${server}: $_
+Fehler bei lokalen Administratoren für ${server}: $_|Error in local administrators for ${server}: $_
+Fehler bei Message Queue für ${server}: $_|Error in message queue for ${server}: $_
+Fehler bei Netzwerk-Info für ${server}: $_|Error in network info for ${server}: $_
+Fehler bei NIC-Analyse für ${server}: $_|Error in NIC analysis for ${server}: $_
+Fehler bei Patch-Info für ${server}: $_|Error in patch info for ${server}: $_
+Fehler bei Pending Reboot für ${server}: $_|Error in pending reboot for ${server}: $_
+Fehler bei Power Plan für ${server}: $_|Error in power plan for ${server}: $_
+Fehler bei Processor Core Analysis für ${server}: $_|Error in processor core analysis for ${server}: $_
+Fehler bei RAM Requirements für ${server}: $_|Error in RAM requirements for ${server}: $_
+Fehler bei RPC Info für ${server}: $_|Error in RPC info for ${server}: $_
+Fehler bei SMBv1 Status für ${server}: $_|Error in SMBv1 status for ${server}: $_
+Fehler bei Software-Abfrage für ${server}: $_|Error in software query for ${server}: $_
+Fehler bei VC++ für ${server}: $_|Error in VC++ for ${server}: $_
+Fehler bei Windows Features für ${server}: $_|Error in Windows features for ${server}: $_
+Fehler bei Zertifikaten für ${server}: $_|Error in certificates for ${server}: $_
+Fehler beim Abrufen der Message-Tracking-Pfade für $($server.Identity): $_|Error retrieving message tracking paths for $($server.Identity): $_
+Fehler beim Abrufen der Queue-Pfade für $($server.Identity): $_|Error retrieving queue paths for $($server.Identity): $_
+Fehler beim Abrufen der Safety-Net-Konfiguration: $_|Error retrieving Safety Net configuration: $_
+Fehler beim Abrufen des SMTP-Logs für $($connector.Identity): $_|Error retrieving SMTP log for $($connector.Identity): $_
+Festplatten-Abfrage fehlgeschlagen für ${server}: $_|Disk query failed for ${server}: $_
+FIP-FS für $server fehlgeschlagen: $_|FIP-FS for $server failed: $_
+FIP-FS Scan Engine für Server: $server|FIP-FS scan engine for server: $server
+Firewall-Profile fehlgeschlagen für ${server}: $_|Firewall profiles failed for ${server}: $_
+Firewall-Regeln fehlgeschlagen für ${server}: $_|Firewall rules failed for ${server}: $_
+Firewall-Regeln für Server: $server|Firewall rules for server: $server
+Hardware-Info für Server: $server|Hardware info for server: $server
+Hotfix-Abfrage fehlgeschlagen für ${server}: $_|Hotfix query failed for ${server}: $_
+HTTP Proxy Check für Server: $server|HTTP proxy check for server: $server
+HTTP Proxy für $server fehlgeschlagen: $_|HTTP proxy for $server failed: $_
+Hybrid ReceiveConnector-Abfrage fehlgeschlagen: $_|Hybrid ReceiveConnector query failed: $_
+Hybrid SendConnector-Abfrage fehlgeschlagen: $_|Hybrid SendConnector query failed: $_
+Hybrid-Konfiguration nicht vorhanden oder Fehler: $_|Hybrid configuration not present or error: $_
+IIS AppPool Settings für Server: $server|IIS AppPool settings for server: $server
+IIS CBA-Check fehlgeschlagen: $_|IIS CBA check failed: $_
+Individuelle Quota Abfrage fehlgeschlagen: $_|Individual quota query failed: $_
+Installierte Software für Server: $server|Installed software for server: $server
+IntraOrganizationConnector-Abfrage fehlgeschlagen: $_|IntraOrganizationConnector query failed: $_
+Invoke-Command Fallback fehlgeschlagen: $_|Invoke-Command fallback failed: $_
+Invoke-Command Fallback für Admin-Gruppe fehlgeschlagen: $_|Invoke-Command fallback for admin group failed: $_
+isLocal=$isLocal für Server=$server|isLocal=$isLocal for server=$server
+LDAP Connectivity für Server: $server|LDAP connectivity for server: $server
+LDAP-Test für $server fehlgeschlagen: $_|LDAP test for $server failed: $_
+Litigation Hold Abfrage fehlgeschlagen: $_|Litigation hold query failed: _
+Lokale Administratoren für $server fehlgeschlagen: $_|Local administrators for $server failed: $_
+Lokale Administratoren für Server: $server|Local administrators for server: $server
+Lokale Assembly-Abfrage fehlgeschlagen: $_|Local assembly query failed: $_
+Lokaler Defender-Check fehlgeschlagen: $_|Local Defender check failed: _
+Mailbox Limits fehlgeschlagen: $_|Mailbox limits failed: $_
+MailboxSearch Abfrage fehlgeschlagen: $_|MailboxSearch query failed: $_
+MalwareFilterPolicy-Abfrage fehlgeschlagen: $_|MalwareFilterPolicy query failed: _
+MAPI Connectivity Abfrage fehlgeschlagen: $_|MAPI connectivity query failed: _
+MAPI VDir Abfrage für $server fehlgeschlagen: $_|MAPI VDir query for $server failed: _
+Message Queues für Server: $server|Message queues for server: $server
+MigrationEndpoint-Abfrage fehlgeschlagen: $_|MigrationEndpoint query failed: _
+MoveRequest-Abfrage fehlgeschlagen: $_|MoveRequest query failed: _
+MX-Abfrage fehlgeschlagen für ${domainName}: $_|MX query failed for ${domainName}: $_
+Netsh WinHTTP Proxy Check fehlgeschlagen: $_|Netsh WinHTTP proxy check failed: _
+Netzwerk-Abfrage fehlgeschlagen für ${server}: $_|Network query failed for ${server}: _
+Netzwerk-Config für Server: $server (lokaler Hostname: $env:COMPUTERNAME)|Network config for server: $server (local hostname: $env:COMPUTERNAME)
+NIC Receive Buffer Check für Server: $server|NIC receive buffer check for server: $server
+NIC-Abfrage für $server fehlgeschlagen: $_|NIC query for $server failed: _
+OAuth2ClientProfile-Abfrage fehlgeschlagen: $_|OAuth2ClientProfile query failed: _
+OAuth-Status Abfrage fehlgeschlagen: $_|OAuth status query failed: _
+Online-Versionscheck (MS Learn) fehlgeschlagen: $_|Online version check (MS Learn) failed: _
+OrganizationRelationship-Abfrage fehlgeschlagen: $_|OrganizationRelationship query failed: _
+OS-Abfrage fehlgeschlagen für ${server}: $_|OS query failed for ${server}: _
+Pagefile-Abfrage fehlgeschlagen für ${server}: $_|Pagefile query failed for ${server}: _
+PartnerApplication-Abfrage fehlgeschlagen: $_|PartnerApplication query failed: _
+Pending Reboot Check für $server fehlgeschlagen: $_|Pending reboot check for $server failed: _
+Pending Reboot Check für Server: $server|Pending reboot check for server: $server
+Phys. Festplatten-Abfrage fehlgeschlagen für ${server}: $_|Physical disk query failed for ${server}: _
+Power Plan für Server: $server|Power plan for server: $server
+Power Plan Name nicht ermittelt: $_|Power plan name not determined: $_
+PowerShell Remoting Prüfung fehlgeschlagen für ${server}: $_|PowerShell remoting check failed for ${server}: _
+Processor Cores für Server: $server|Processor cores for server: $server
+Processor-Abfrage fehlgeschlagen für ${server}: $_|Processor query failed for ${server}: _
+Queue-Abfrage für $server fehlgeschlagen: $_|Queue query for $server failed: _
+RAM-Abfrage fehlgeschlagen für ${server}: $_|RAM query failed for ${server}: _
+RAM-Check für Server: $server|RAM check for server: $server
+Receive Connector TLS-Prüfung fehlgeschlagen: $_|Receive connector TLS check failed: _
+ReceiveConnector Auth-Abfrage fehlgeschlagen: $_|ReceiveConnector auth query failed: _
+ReceiveConnector Limits fehlgeschlagen: $_|ReceiveConnector limits failed: _
+Registry-Zugriff auf NIC-Parameter nicht möglich: $_|Registry access to NIC parameters not possible: _
+Relay Connector Abfrage fehlgeschlagen: $_|Relay connector query failed: _
+Remote Registry auf ${ComputerName} fehlgeschlagen ($ValueName): $_|Remote registry on ${ComputerName} failed ($ValueName): $_
+Remote Registry SubKey-Enumeration auf ${ComputerName} (${RegistryPath}) fehlgeschlagen: $_|Remote registry subkey enumeration on ${ComputerName} (${RegistryPath}) failed: $_
+RemoteDomain Limits fehlgeschlagen: $_|RemoteDomain limits failed: _
+RemoteMailbox-Abfrage fehlgeschlagen: $_|RemoteMailbox query failed: _
+RPC Port für Server: $server|RPC port for server: $server
+RPC-Test für $server fehlgeschlagen: $_|RPC test for $server failed: _
+Send Connector TLS-Prüfung fehlgeschlagen: $_|Send connector TLS check failed: _
+SendConnector Limits fehlgeschlagen: $_|SendConnector limits failed: _
+Service-Abfrage fehlgeschlagen für ${server}: $_|Service query failed for ${server}: _
+SettingOverride-Abfrage fehlgeschlagen: $_|SettingOverride query failed: _
+SID-Translation für Administratoren-Gruppe fehlgeschlagen: $_|SID translation for administrators group failed: _
+SMBv1 Status für Server: $server|SMBv1 status for server: $server
+SMBv1-Abfrage für $server fehlgeschlagen: $_|SMBv1 query for $server failed: _
+System-Abfrage fehlgeschlagen für ${server}: $_|System query failed for ${server}: _
+TransportAgent-Abfrage fehlgeschlagen: $_|TransportAgent query failed: _
+TransportConfig Limits fehlgeschlagen: $_|TransportConfig limits failed: _
+TransportConfig TLS-Abfrage fehlgeschlagen: $_|TransportConfig TLS query failed: _
+VC++ für $server fehlgeschlagen: $_|VC++ for $server failed: _
+VC++ Redist für Server: $server|VC++ redist for server: $server
+VC++ Registry (NET) für $server fehlgeschlagen: $_|VC++ registry (NET) for $server failed: _
+VC++ Registry-Abfrage fehlgeschlagen: $_|VC++ registry query failed: _
+Versuche Get-NetAdapter via Remoting auf $server...|Trying Get-NetAdapter via remoting on $server...
+Windows Features für $server fehlgeschlagen: $_|Windows features for $server failed: _
+Windows Features für Server: $server|Windows features for server: $server
+Windows-Lizenz Abfrage fehlgeschlagen für ${server}: $_|Windows license query failed for ${server}: _
+Word-COM PDF-Export nicht möglich: $($_.Exception.Message). Versuche Browser-Headless...|Word COM PDF export not possible: $($_.Exception.Message). Trying headless browser...
+WsMan fehlgeschlagen für ${ComputerName}: $($_.Exception.Message)|WsMan failed for ${ComputerName}: $($_.Exception.Message)
+Zertifikate für Server: $server|Certificates for server: $server
+Zertifikat-Prüfung fehlgeschlagen für ${server}: $_|Certificate check failed for ${server}: $_
+für ${server}: $_|for ${server}: $_
+für $server: $_|for $server: $_
+für ${server}:|for ${server}:
+für $server|for $server
+für ${ComputerName}: $_|for ${ComputerName}: $_
+für ${domainName}: $_|for ${domainName}: $_
+für ${domainName}|for ${domainName}
+für $domainName|for $domainName
+für ${server}|for ${server}
+für ${server} $_|for ${server} $_
+für ${server}.|for ${server}.
+für Server: $_|for server: $_
+für Server:|for server:
+für Server|for server
+für $_|for $_
+für|for
+# === Fehlende Log-Meldungen (final) ===
+AAD Connect Check fehlgeschlagen: $_|AAD Connect check failed: $_
+AcceptedDomain-Abfrage fehlgeschlagen: $_|AcceptedDomain query failed: $_
+ADDomain-Abfrage fehlgeschlagen: $_|ADDomain query failed: $_
+ADSI Administratoren-Abfrage fehlgeschlagen: $_|ADSI administrators query failed: $_
+Archiv-Datenbank Abfrage fehlgeschlagen: $_|Archive database query failed: $_
+Audit Logging Abfrage fehlgeschlagen: $_|Audit logging query failed: $_
+AuthConfig-Abfrage fehlgeschlagen: $_|AuthConfig query failed: $_
+AuthServer-Abfrage fehlgeschlagen: $_|AuthServer query failed: $_
+Auto-Expanding Check fehlgeschlagen: $_|Auto-Expanding check failed: $_
+AV Registry-Abfrage (CIM) fehlgeschlagen: $_|AV registry query (CIM) failed: $_
+CalendarProcessing Defaults fehlgeschlagen: $_|CalendarProcessing defaults failed: $_
+CAL-Postfachzählung fehlgeschlagen: $_|CAL mailbox count failed: $_
+CBA-Abfrage fehlgeschlagen: $_|CBA query failed: $_
+Certificate-Abfrage fehlgeschlagen: $_|Certificate query failed: $_
+CIM-Session (DCOM) zu $ComputerName erfolgreich.|CIM session (DCOM) to $ComputerName successful.
+CIM-Session (WsMan) zu $ComputerName erfolgreich.|CIM session (WsMan) to $ComputerName successful.
+Database Copies Abfrage fehlgeschlagen: $_|Database copies query failed: $_
+Datenbank-Quota Abfrage fehlgeschlagen: $_|Database quota query failed: $_
+DLP Policy Abfrage fehlgeschlagen: $_|DLP policy query failed: $_
+Erfolgreich $($nicList.Count) Adapter verarbeitet|Successfully processed $($nicList.Count) adapters
+Exchange Edition Abfrage fehlgeschlagen: $_|Exchange edition query failed: $_
+Exchange Edition erkannt: 2019 (Version 15.2, Build $build < 2000)|Exchange edition detected: 2019 (version 15.2, build $build < 2000)
+Exchange Edition erkannt: SE (Version 15.2, Build $build >= 2000)|Exchange edition detected: SE (version 15.2, build $build >= 2000)
+Exchange Version erkannt: $version|Exchange version detected: $version
+Exchange Version erkannt:|Exchange version detected:
+Exchange Edition erkannt:|Exchange edition detected:
+CIM-Session über WsMan für|CIM session via WsMan for
+CIM-Session über WsMan for|CIM session via WsMan for
+CIM-Session (WsMan) zu|CIM session (WsMan) to
+erfolgreich.|successful.
+Netzwerk-Config für Server:|Network config for server:
+Netzwerk-Config for server:|Network config for server:
+lokaler Hostname:|local hostname:
+Get-NetAdapter gefunden:|Get-NetAdapter found:
+Verarbeite 1 Adapter...|Processing 1 adapter...
+Verarbeite|Processing
+Adapter verarbeitet|adapters processed
+Erfolgreich 1 Adapter verarbeitet|Successfully processed 1 adapter
+Erfolgreich|Successfully processed
+FederatedOrganizationIdentifier-Abfrage fehlgeschlagen: $_|FederatedOrganizationIdentifier query failed: $_
+FederationTrust-Abfrage fehlgeschlagen: $_|FederationTrust query failed: $_
+Fehler bei AD-Informationen: $_|Error in AD information: $_
+Fehler bei Archive-Konfiguration: $_|Error in archive configuration: $_
+Fehler bei Calendar/Resource Mailbox Abfrage: $_|Error in calendar/resource mailbox query: $_
+Fehler bei DAG-Abfrage: $_|Error in DAG query: $_
+Fehler bei Datenbank/DAG-Informationen: $_|Error in database/DAG information: $_
+Fehler bei EEMS Abfrage auf $server : $_|Error in EEMS query on $server: $_
+PDF-Export nicht möglich (weder Word noch Edge/Chrome verfügbar oder alle Versuche fehlgeschlagen).|PDF export not possible (neither Word nor Edge/Chrome available or all attempts failed).
+PDF-Export nicht möglich: Word nicht verfügbar und kein Browser (Edge/Chrome) gefunden.|PDF export not possible: Word not available and no browser (Edge/Chrome) found.
+VBS CIM-Abfrage nicht möglich (Namespace nicht vorhanden): $_|VBS CIM query not possible (namespace not present): $_
+# === Fehlende DOC-Texte (final) ===
+Fehler bei der Abfrage: $_|Error in the query: $_
+SMBv1 sollte deaktiviert sein. Dies bietet Schutz gegen WannaCry und verbessert die Performance. In modernen Windows-Versionen ist SMBv1 standardmäßig deaktiviert.|SMBv1 should be disabled. This provides protection against WannaCry and improves performance. In modern Windows versions, SMBv1 is disabled by default.
+SMBv1-Status konnte nicht ermittelt werden: $_|SMBv1 status could not be determined: $_
+DAG-Informationen konnten nicht abgerufen werden: $_|DAG information could not be retrieved: $_
+Processor-Informationen konnten nicht abgerufen werden: $_|Processor information could not be retrieved: $_
+RAM-Informationen konnten nicht abgerufen werden: $_|RAM information could not be retrieved: $_
+Service-Informationen konnten nicht abgerufen werden: $_|Service information could not be retrieved: $_
+Hinweis: Um detailliertere EEMS-Informationen zu erhalten, führen Sie folgendes Skript auf dem Exchange Server aus: Get-Mitigations.ps1|Note: To obtain more detailed EEMS information, run the following script on the Exchange Server: Get-Mitigations.ps1
+Fehler bei EEMS-Abfrage: $_|Error in EEMS query: $_
+Exchange-Editionen nicht abrufbar: $_|Exchange editions not retrievable: $_
+RPC-Status konnte nicht ermittelt werden: $_|RPC status could not be determined: $_
+Cipher Suite-Details nicht abrufbar: $_|Cipher suite details not retrievable: $_
+Hinweis: WinRM sollte nur Kerberos oder Certificate-basierte Auth verwenden, nicht Basic Auth über HTTP.|Note: WinRM should only use Kerberos or certificate-based auth, not Basic Auth over HTTP.
+Relevante Informationen: Sync-Intervall, gefilterte OUs, Attribut-Mappings, Sync-Regeln, Staging-Mode.|Relevant information: sync interval, filtered OUs, attribute mappings, sync rules, staging mode.
+Queue-Informationen konnten nicht abgerufen werden: $_|Queue information could not be retrieved: $_
+Für detaillierte CBA-Konfiguration prüfen Sie die IIS-Manager-Konsole |For detailed CBA configuration check the IIS Manager console 
+.NET Framework Informationen konnten nicht abgerufen werden: $_|.NET Framework information could not be retrieved: $_
+CPU Informationen konnten nicht abgerufen werden: $_|CPU information could not be retrieved: $_
+VC++ Redistributable Informationen konnten nicht abgerufen werden: $_|VC++ Redistributable information could not be retrieved: $_
+Credential Guard Informationen konnten nicht abgerufen werden: $_|Credential Guard information could not be retrieved: $_
+Administratoren-Informationen konnten nicht abgerufen werden: $_|Administrators information could not be retrieved: $_
+FIP-FS Informationen konnten nicht abgerufen werden: $_|FIP-FS information could not be retrieved: $_
+HTTP Proxy Informationen konnten nicht abgerufen werden: $_|HTTP Proxy information could not be retrieved: $_
+Antivirus-Informationen konnten nicht abgerufen werden: $_|Antivirus information could not be retrieved: $_
+AutoReseed-Informationen nicht abrufbar: $_|AutoReseed information not retrievable: $_
 '@
 
 # Interne Caches der Übersetzungs-Engine
@@ -1215,21 +1546,17 @@ function ConvertTo-LocalizedHtml {
 
 #endregion
 
-#region ============================================================
-# ADMINISTRATOR-PRÜFUNG & AUTO-RESTART
-#endregion ============================================================
-
-# Prüfe, ob das Skript als Administrator läuft
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-    [Security.Principal.WindowsBuiltInRole]::Administrator
-)
-
-if (-not $isAdmin) {
-    Write-Host (Get-LocText -Key 'AdminRequired') -ForegroundColor Yellow
-    
-    # Sammle alle übergebenen Parameter
+function Get-ScriptArgumentList {
+    <#
+    .SYNOPSIS
+        Baut die Argumentliste für einen Neustart dieses Skripts
+        (Rechte-Erhöhung am Anfang, Selbst-Update am Ende).
+    .NOTES
+        Alle übergebenen Parameter (-ExchangeServers, -OutputPath, -Language ...)
+        bleiben erhalten, damit der Neustart identisch läuft.
+    #>
     $argumentList = @()
-    
+
     if ($ExchangeServers) {
         $argumentList += "-ExchangeServers @($(($ExchangeServers | ForEach-Object { "'{0}'" -f $_ }) -join ','))"
     }
@@ -1254,6 +1581,30 @@ if (-not $isAdmin) {
     if ($NoGui) {
         $argumentList += "-NoGui"
     }
+    if ($NoUpdateCheck) {
+        $argumentList += "-NoUpdateCheck"
+    }
+    if ($NoSelfUpdate) {
+        $argumentList += "-NoSelfUpdate"
+    }
+
+    return $argumentList
+}
+
+#region ============================================================
+# ADMINISTRATOR-PRÜFUNG & AUTO-RESTART
+#endregion ============================================================
+
+# Prüfe, ob das Skript als Administrator läuft
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator
+)
+
+if (-not $isAdmin) {
+    Write-Host (Get-LocText -Key 'AdminRequired') -ForegroundColor Yellow
+    
+    # Sammle alle übergebenen Parameter
+    $argumentList = Get-ScriptArgumentList
     
     # Starte das Skript mit Administrator-Rechten
     $scriptPath = $MyInvocation.MyCommand.Path
@@ -1268,6 +1619,12 @@ Write-Host (Get-LocText -Key 'AdminConfirmed') -ForegroundColor Green
 #region ============================================================
 # VARIABLEN-DEFINITION
 #endregion ============================================================
+
+# --- Skriptversion (Basis für Update-Check & Selbst-Update) ---
+$script:ScriptVersion           = "2.1"
+
+# --- Startparameter (für den Neustart nach dem Selbst-Update) ---
+$script:LaunchParameters        = $PSBoundParameters
 
 # --- Pfade und Dateien ---
 $script:LogPath                 = $OutputPath
@@ -7696,23 +8053,48 @@ function Get-LocalAdminInfo {
                         $serverHTML += "<p class='no-data'>Keine Mitglieder gefunden (oder Zugriff verweigert).</p>"
                     }
 
-                    # Zusätzliche Information: Exchange Administratoren prüfen
+                    # Zusätzliche Information: Administratoren-Gruppe per ADSI prüfen
                     try {
                         $isLocal = $server -match "^($([regex]::Escape($env:COMPUTERNAME))|localhost|\.)$"
                         if ($isLocal) {
-                            $groupObj = [ADSI]"WinNT://$server/Administrators"
-                            $adsiMembers = @($groupObj.Invoke("Members"))
-                            $adsiData = foreach ($member in $adsiMembers) {
-                                $name = $member.GetType().InvokeMember("Name", 'GetProperty', $null, $member, $null)
-                                $adsPath = $member.GetType().InvokeMember("AdsPath", 'GetProperty', $null, $member, $null)
-                                [PSCustomObject]@{
-                                    "Mitglied (ADSI)" = $name
-                                    "ADS Path"         = $adsPath
+                            # Lokalen Gruppennamen sprachunabhängig per SID ermitteln
+                            # (S-1-5-32-544 = Built-in Administrators-Gruppe, lokalisiert z.B. "Administradores")
+                            $adsiGroupName = "Administrators"
+                            try {
+                                $builtinAdminSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
+                                $adsiGroupName = ($builtinAdminSid.Translate([System.Security.Principal.NTAccount]).Value -split '\\')[-1]
+                            } catch {
+                                Write-Log -Message "SID-Translation für Administratoren-Gruppe fehlgeschlagen: $_" -Level "INFO"
+                            }
+
+                            # Binding mit aufgelöstem Namen, Fallback auf bekannte Namen
+                            $adsiMembers = $null
+                            foreach ($grpName in @($adsiGroupName, "Administrators", "Administratoren") | Select-Object -Unique) {
+                                try {
+                                    $groupObj = [ADSI]"WinNT://./$grpName,group"
+                                    $adsiMembers = @($groupObj.Invoke("Members"))
+                                    break
+                                } catch {
+                                    $adsiMembers = $null
                                 }
                             }
-                            if ($adsiData.Count -gt $memberData.Count) {
-                                $serverHTML += "<h4>Erweiterte Administratoren-Liste (ADSI)</h4>"
-                                $serverHTML += (ConvertTo-HTMLTable -Data $adsiData)
+
+                            if ($adsiMembers) {
+                                $adsiData = foreach ($member in $adsiMembers) {
+                                    $name = $member.GetType().InvokeMember("Name", 'GetProperty', $null, $member, $null)
+                                    $adsPath = $member.GetType().InvokeMember("AdsPath", 'GetProperty', $null, $member, $null)
+                                    [PSCustomObject]@{
+                                        "Mitglied (ADSI)" = $name
+                                        "ADS Path"         = $adsPath
+                                    }
+                                }
+                                if ($adsiData.Count -gt $memberData.Count) {
+                                    $serverHTML += "<h4>Erweiterte Administratoren-Liste (ADSI)</h4>"
+                                    $serverHTML += (ConvertTo-HTMLTable -Data $adsiData)
+                                }
+                            }
+                            else {
+                                Write-Log -Message "ADSI: Administratoren-Gruppe unter WinNT://./ nicht gefunden (versucht: $adsiGroupName)." -Level "INFO"
                             }
                         }
                     } catch {
@@ -8267,7 +8649,8 @@ function Get-SecurityCVEInfo {
         Write-Log -Message "Rufe BSI RSS-Feed ab: $rssUrl" -Level "INFO"
 
         # Abrufen mit Invoke-WebRequest für korrektes XML-Parsing
-        $webResponse = Invoke-WebRequest -Uri $rssUrl -ErrorAction SilentlyContinue
+        # -UseBasicParsing verhindert die IE-Skriptausführung-Warnung und den interaktiven Prompt
+        $webResponse = Invoke-WebRequest -Uri $rssUrl -UseBasicParsing -TimeoutSec 30 -ErrorAction SilentlyContinue
         if (-not $webResponse) { throw "RSS-Feed nicht erreichbar." }
 
         # RSS-Feed als XML parsen
@@ -8819,7 +9202,11 @@ function Get-AutoReseedInfo {
 # ---------------------------------------------------------------
 $script:ExchangeVersionCatalog = @{
     # === Exchange Server SE (15.2.2xxx) ===
-    "15.2.2562.45" = @{ Name = "Exchange Server SE RTM Jul26SU";          Link = "https://support.microsoft.com/help/5103212"; Date = "2026-07-14" }
+    "15.2.2562.56" = @{ Name = "Exchange Server SE RTM Oct26SU";           Link = "https://support.microsoft.com/help/5128895"; Date = "2026-10-13" }
+    "15.2.2562.53" = @{ Name = "Exchange Server SE RTM Sep26SUv2";         Link = "https://support.microsoft.com/help/5129955"; Date = "2026-10-02" }
+    "15.2.2562.49" = @{ Name = "Exchange Server SE RTM Sep26SU";           Link = "https://support.microsoft.com/help/5121608"; Date = "2026-09-08" }
+    "15.2.2562.46" = @{ Name = "Exchange Server SE RTM Aug26SU";           Link = "https://support.microsoft.com/help/5121573"; Date = "2026-08-11" }
+    "15.2.2562.45" = @{ Name = "Exchange Server SE RTM Jul26SU";           Link = "https://support.microsoft.com/help/5103212"; Date = "2026-07-14" }
     "15.2.2562.43" = @{ Name = "Exchange Server SE RTM Jun26SU";          Link = "https://support.microsoft.com/help/5094139"; Date = "2026-06-09" }
     "15.2.2562.41" = @{ Name = "Exchange Server SE RTM May26HU";          Link = "https://support.microsoft.com/help/5081755"; Date = "2026-05-07" }
     "15.2.2562.37" = @{ Name = "Exchange Server SE RTM Feb26SU";          Link = "https://support.microsoft.com/help/5074992"; Date = "2026-02-10" }
@@ -8830,6 +9217,10 @@ $script:ExchangeVersionCatalog = @{
     "15.2.2562.17" = @{ Name = "Exchange Server SE RTM";                  Link = "https://www.microsoft.com/download/details.aspx?id=108244"; Date = "2025-07-01" }
 
     # === Exchange Server 2019 CU15 (15.2.1748.xxx) ===
+    "15.2.1748.55" = @{ Name = "Exchange Server 2019 CU15 Oct26SU";       Link = "https://support.microsoft.com/help/5128896"; Date = "2026-10-13" }
+    "15.2.1748.53" = @{ Name = "Exchange Server 2019 CU15 Sep26SUv2";     Link = "https://support.microsoft.com/help/5129956"; Date = "2026-10-02" }
+    "15.2.1748.51" = @{ Name = "Exchange Server 2019 CU15 Sep26SU";       Link = "https://support.microsoft.com/help/5121609"; Date = "2026-09-08" }
+    "15.2.1748.49" = @{ Name = "Exchange Server 2019 CU15 Aug26SU";       Link = "https://support.microsoft.com/help/5121574"; Date = "2026-08-11" }
     "15.2.1748.48" = @{ Name = "Exchange Server 2019 CU15 Jul26SU";       Link = "https://support.microsoft.com/help/5103213"; Date = "2026-07-14" }
     "15.2.1748.46" = @{ Name = "Exchange Server 2019 CU15 Jun26SU";       Link = "https://support.microsoft.com/help/5094140"; Date = "2026-06-09" }
     "15.2.1748.43" = @{ Name = "Exchange Server 2019 CU15 Feb26SU";       Link = "https://support.microsoft.com/help/5074993"; Date = "2026-02-10" }
@@ -8842,6 +9233,10 @@ $script:ExchangeVersionCatalog = @{
     "15.2.1748.10" = @{ Name = "Exchange Server 2019 CU15 (2025H1)";      Link = "https://www.microsoft.com/download/details.aspx?id=106402"; Date = "2025-02-10" }
 
     # === Exchange Server 2019 CU14 (15.2.1544.xxx) ===
+    "15.2.1544.50" = @{ Name = "Exchange Server 2019 CU14 Oct26SU";       Link = "https://support.microsoft.com/help/5128897"; Date = "2026-10-13" }
+    "15.2.1544.48" = @{ Name = "Exchange Server 2019 CU14 Sep26SUv2";     Link = "https://support.microsoft.com/help/5129957"; Date = "2026-10-02" }
+    "15.2.1544.46" = @{ Name = "Exchange Server 2019 CU14 Sep26SU";       Link = "https://support.microsoft.com/help/5121610"; Date = "2026-09-08" }
+    "15.2.1544.44" = @{ Name = "Exchange Server 2019 CU14 Aug26SU";       Link = "https://support.microsoft.com/help/5121575"; Date = "2026-08-11" }
     "15.2.1544.43" = @{ Name = "Exchange Server 2019 CU14 Jul26SU";       Link = "https://support.microsoft.com/help/5103214"; Date = "2026-07-14" }
     "15.2.1544.41" = @{ Name = "Exchange Server 2019 CU14 Jun26SU";       Link = "https://support.microsoft.com/help/5094142"; Date = "2026-06-09" }
     "15.2.1544.39" = @{ Name = "Exchange Server 2019 CU14 Feb26SU";       Link = "https://support.microsoft.com/help/5074994"; Date = "2026-02-10" }
@@ -8885,6 +9280,10 @@ $script:ExchangeVersionCatalog = @{
     "15.2.1118.7"  = @{ Name = "Exchange Server 2019 CU12 (2022H1)";      Link = "https://www.microsoft.com/download/details.aspx?id=104131"; Date = "2022-04-20" }
 
     # === Exchange Server 2016 CU23 (15.1.2507.xxx) ===
+    "15.1.2507.77" = @{ Name = "Exchange Server 2016 CU23 Oct26SU";       Link = "https://support.microsoft.com/help/5128898"; Date = "2026-10-13" }
+    "15.1.2507.75" = @{ Name = "Exchange Server 2016 CU23 Sep26SUv2";     Link = "https://support.microsoft.com/help/5129958"; Date = "2026-10-02" }
+    "15.1.2507.73" = @{ Name = "Exchange Server 2016 CU23 Sep26SU";       Link = "https://support.microsoft.com/help/5121611"; Date = "2026-09-08" }
+    "15.1.2507.72" = @{ Name = "Exchange Server 2016 CU23 Aug26SU";       Link = "https://support.microsoft.com/help/5121576"; Date = "2026-08-11" }
     "15.1.2507.71" = @{ Name = "Exchange Server 2016 CU23 Jul26SU";       Link = "https://support.microsoft.com/help/5103215"; Date = "2026-07-14" }
     "15.1.2507.69" = @{ Name = "Exchange Server 2016 CU23 Jun26SU";       Link = "https://support.microsoft.com/help/5094144"; Date = "2026-06-09" }
     "15.1.2507.66" = @{ Name = "Exchange Server 2016 CU23 Feb26SU";       Link = "https://support.microsoft.com/help/5074995"; Date = "2026-02-10" }
@@ -8933,11 +9332,11 @@ $script:ExchangeVersionCatalog = @{
 
 # Bekannte neueste Version pro Major-Version (Fallback, wenn Online-Check fehlschlägt)
 $script:ExchangeLatestPerMajor = @{
-    "15.2.2" = @{ Build = "15.2.2562.45"; Name = "Exchange Server SE RTM Jul26SU"; Link = "https://support.microsoft.com/help/5103212"; SupportEnd = $null; SupportLabel = "Aktiv" }
-    "15.2.1" = @{ Build = "15.2.1748.48"; Name = "Exchange Server 2019 CU15 Jul26SU"; Link = "https://support.microsoft.com/help/5103213"; SupportEnd = "2025-10-14"; SupportLabel = "🔴 Kritisch (Support beendet)" }
-    "15.2.0" = @{ Build = "15.2.1544.43"; Name = "Exchange Server 2019 CU14 Jul26SU"; Link = "https://support.microsoft.com/help/5103214"; SupportEnd = "2025-10-14"; SupportLabel = "🔴 Kritisch (Support beendet)" }
-    "15.2."  = @{ Build = "15.2.1748.48"; Name = "Exchange Server 2019 CU15 Jul26SU"; Link = "https://support.microsoft.com/help/5103213"; SupportEnd = "2025-10-14"; SupportLabel = "🔴 Kritisch (Support beendet)" }
-    "15.1."  = @{ Build = "15.1.2507.71"; Name = "Exchange Server 2016 CU23 Jul26SU"; Link = "https://support.microsoft.com/help/5103215"; SupportEnd = "2025-10-14"; SupportLabel = "🔴 Kritisch (Support beendet)" }
+    "15.2.2" = @{ Build = "15.2.2562.56"; Name = "Exchange Server SE RTM Oct26SU"; Link = "https://support.microsoft.com/help/5128895"; SupportEnd = $null; SupportLabel = "Aktiv" }
+    "15.2.1" = @{ Build = "15.2.1748.55"; Name = "Exchange Server 2019 CU15 Oct26SU"; Link = "https://support.microsoft.com/help/5128896"; SupportEnd = "2025-10-14"; SupportLabel = "🔴 Kritisch (Support beendet)" }
+    "15.2.0" = @{ Build = "15.2.1544.50"; Name = "Exchange Server 2019 CU14 Oct26SU"; Link = "https://support.microsoft.com/help/5128897"; SupportEnd = "2025-10-14"; SupportLabel = "🔴 Kritisch (Support beendet)" }
+    "15.2."  = @{ Build = "15.2.1748.55"; Name = "Exchange Server 2019 CU15 Oct26SU"; Link = "https://support.microsoft.com/help/5128896"; SupportEnd = "2025-10-14"; SupportLabel = "🔴 Kritisch (Support beendet)" }
+    "15.1."  = @{ Build = "15.1.2507.77"; Name = "Exchange Server 2016 CU23 Oct26SU"; Link = "https://support.microsoft.com/help/5128898"; SupportEnd = "2025-10-14"; SupportLabel = "🔴 Kritisch (Support beendet)" }
     "15.0."  = @{ Build = "15.0.1497.48"; Name = "Exchange Server 2013 CU23 Mar23SU"; Link = "https://support.microsoft.com/help/5024296"; SupportEnd = "2023-04-11"; SupportLabel = "🔴 Kritisch (Support beendet)" }
 }
 
@@ -9007,40 +9406,83 @@ function Update-ExchangeVersionCatalogOnline {
     .SYNOPSIS
         Versucht die Microsoft Build-Webseite zu parsen und den Katalog zu aktualisieren.
         (Nicht kritisch – nur Verbesserung gegenüber statischem Katalog)
+    .NOTES
+        Der Parser arbeitet abschnittsweise (h2-ids) und zeilenweise (Regex auf <tr>),
+        statt auf Tabellen-Header-Texte zu setzen – die Header unterscheiden sich je
+        nach Sprache (de/en) und enthalten <br>-Tags.
     #>
     Write-Log -Message "=== Prüfe Exchange Build-Versionen online (MS Learn) ===" -Level "INFO"
 
+    # Zielsektionen: h2-id der MS-Learn-Seite, zugehörige LatestPerMajor-Keys, optionaler Namensfilter
+    $targets = @(
+        @{ Id = 'exchange-server-se';    Keys = @('15.2.2');            NameFilter = $null  }
+        @{ Id = 'exchange-server-2019';  Keys = @('15.2.1', '15.2.');   NameFilter = 'CU15' }
+        @{ Id = 'exchange-server-2019';  Keys = @('15.2.0');            NameFilter = 'CU14' }
+        @{ Id = 'exchange-server-2016';  Keys = @('15.1.');             NameFilter = 'CU23' }
+    )
+
+    $rowRx = [regex]'(?s)<tr>\s*<td>.*?<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>.*?</td>\s*<td[^>]*>([^<]*)</td>\s*<td[^>]*>([^<]*)</td>'
+
     try {
         $msUrl = "https://learn.microsoft.com/de-de/exchange/new-features/build-numbers-and-release-dates"
-        $webResponse = Invoke-WebRequest -Uri $msUrl -UseBasicParsing -ErrorAction SilentlyContinue
+        $webResponse = Invoke-WebRequest -Uri $msUrl -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop
         if (-not $webResponse) { throw "MS Learn nicht erreichbar" }
-
-        # Prüfe ob wir die Seite parsen können (robuster Regex)
         $content = $webResponse.Content
 
-        # Aktuelle Tabelle mit "Exchange Server SE" suchen
-        if ($content -match '(?s)Exchange Server SE.*?Buildnummer\(langes Format\)</th>\s*</tr>\s*((?:<tr>.*?</tr>\s*)+)') {
-            $rows = $Matches[1]
-            $sePattern = '<td>\s*<a[^>]*href="([^"]*)"[^>]*>([^<]+)</a>\s*</td>\s*<td[^>]*>([^<]*)</td>\s*<td[^>]*>([^<]*)</td>\s*<td[^<]*>[^<]*</td>'
-            if ($rows -match $sePattern) {
-                Write-Log -Message "MS Build-Seite geparst – SE-Zeile gefunden: $($Matches[2]) ($($Matches[4]))" -Level "INFO"
-                # Aktualisiere Latest SE
-                $build = ($Matches[4] -replace '\.0(\d)', '.$1').Trim()
-                if ($Matches[4] -match '(\d+\.\d+)\.(\d+)\.(\d+)') {
-                    $build = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+        $updatedCount = 0
+        $parsedCount  = 0
+
+        foreach ($t in $targets) {
+            # Sektion zwischen ihrem h2 und dem nächsten h2 isolieren
+            $secRx = [regex]('(?s)<h2[^>]*id="' + [regex]::Escape($t.Id) + '".*?(?=<h2)')
+            $secMatch = $secRx.Match($content)
+            if (-not $secMatch.Success) { continue }
+
+            foreach ($m in $rowRx.Matches($secMatch.Value)) {
+                $seName  = $m.Groups[2].Value.Trim()
+                $seLink  = $m.Groups[1].Value.Trim()
+                $seBuild = $m.Groups[4].Value.Trim()
+
+                if ($t.NameFilter -and ($seName -notlike "*$($t.NameFilter)*")) { continue }
+
+                # Build normalisieren: "15.02.2562.056" -> "15.2.2562.56"
+                $build = ""
+                if ($seBuild -match '(\d+)\.(\d+)\.(\d+)\.(\d+)') {
+                    $build = "$([int]$Matches[1]).$([int]$Matches[2]).$([int]$Matches[3]).$([int]$Matches[4])"
                 }
-                if ($build -and $script:ExchangeLatestPerMajor.ContainsKey("15.2.2")) {
-                    # Support-Daten aus bestehendem Eintrag übernehmen
-                    $existing = $script:ExchangeLatestPerMajor["15.2.2"]
-                    $script:ExchangeLatestPerMajor["15.2.2"] = @{
-                        Build = $build
-                        Name  = $Matches[2]
-                        Link  = $Matches[1]
-                        SupportEnd   = $existing.SupportEnd
-                        SupportLabel = $existing.SupportLabel
+                if (-not $build) { continue }
+
+                $parsedCount++
+                foreach ($key in $t.Keys) {
+                    if (-not $script:ExchangeLatestPerMajor.ContainsKey($key)) { continue }
+                    $existing = $script:ExchangeLatestPerMajor[$key]
+
+                    # Nur übernehmen, wenn der Online-Wert wirklich NEUER ist (kein Rückschritt)
+                    $isNewer = $false
+                    try {
+                        $isNewer = ([version]$build -gt [version]$existing.Build)
+                    } catch { $isNewer = $true }
+
+                    if ($isNewer) {
+                        $script:ExchangeLatestPerMajor[$key] = @{
+                            Build        = $build
+                            Name         = $seName
+                            Link         = $seLink
+                            SupportEnd   = $existing.SupportEnd
+                            SupportLabel = $existing.SupportLabel
+                        }
+                        $updatedCount++
+                        Write-Log -Message "MS Build-Seite geparst – Online-Wert übernommen: $build ($seName)" -Level "INFO"
+                    } else {
+                        Write-Log -Message "MS Build-Seite geparst – Online-Wert nicht neuer als Katalog, Katalog beibehalten: $build <= $($existing.Build)" -Level "INFO"
                     }
                 }
+                break  # erste passende Zeile der Sektion reicht
             }
+        }
+
+        if ($parsedCount -eq 0) {
+            Write-Log -Message "MS Build-Seite geparst – keine passende Zeile gefunden, statischer Katalog bleibt aktiv." -Level "INFO"
         }
 
         Write-Log -Message "Online-Check für Exchange Builds abgeschlossen." -Level "INFO"
@@ -9575,30 +10017,166 @@ function Export-DocumentToPdf {
     }
 
     # --- Methode 2: Edge / Chrome Headless ---
-    $browsers = @(
+    # Browser an mehreren Standorten suchen:
+    #  - System-Installationen (Program Files / Program Files (x86))
+    #  - Benutzer-Installationen (LOCALAPPDATA) - z.B. ohne Admin-Rechte installiert
+    $browserCandidates = @(
         "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
         "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+        "$env:LOCALAPPDATA\Microsoft\Edge\Application\msedge.exe",
         "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
-        "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
+        "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+        "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
     )
-    foreach ($browser in $browsers) {
-        if (Test-Path $browser) {
-            try {
-                $uri = ([System.Uri]$HtmlPath).AbsoluteUri
-                $arguments = "--headless --disable-gpu --print-to-pdf=`"$PdfPath`" --no-margins `"$uri`""
-                Start-Process -FilePath $browser -ArgumentList $arguments -Wait -NoNewWindow
-                if (Test-Path $PdfPath) {
-                    Write-Log -Message "PDF über Browser-Headless erstellt: $PdfPath" -Level "INFO"
-                    return $true
-                }
+    # Registry "App Paths" als zusätzliche Quelle (individuelle Installationspfade)
+    foreach ($appPathKey in @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe",
+            "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe",
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+            "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"
+        )) {
+        try {
+            if (Test-Path $appPathKey) {
+                $regPath = (Get-ItemProperty -Path $appPathKey -ErrorAction Stop).'(default)'
+                if ($regPath) { $browserCandidates += $regPath.Trim('"') }
             }
-            catch {
-                Write-Log -Message "Browser-Headless PDF-Export fehlgeschlagen ($browser): $_" -Level "WARNING"
+        }
+        catch { }
+    }
+    $browsers = @($browserCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique)
+
+    if ($browsers.Count -eq 0) {
+        Write-Log -Message "PDF-Export nicht möglich: Word nicht verfügbar und kein Browser (Edge/Chrome) gefunden." -Level "ERROR"
+        return $false
+    }
+
+    $uri = ([System.Uri]$HtmlPath).AbsoluteUri
+    # PDF wird zunächst ins Temp-Verzeichnis geschrieben und erst danach auf den
+    # Zielpfad verschoben (schließt Probleme im Zielordner als Ursache aus)
+    $tempPdf = Join-Path ([System.IO.Path]::GetTempPath()) ("PdfExport_" + [System.Guid]::NewGuid().ToString("N") + ".pdf")
+
+    $htmlSizeMB = if (Test-Path $HtmlPath) { [math]::Round((Get-Item $HtmlPath).Length / 1MB, 2) } else { "unbekannt" }
+    $firstBrowserVersion = try { (Get-Item $browsers[0]).VersionInfo.FileVersion } catch { "unbekannt" }
+    Write-Log -Message "Browser-Headless Versuch - HTML: $HtmlPath ($htmlSizeMB MB), Ziel: $PdfPath | Browser: $($browsers[0]) (Version $firstBrowserVersion) | TEMP: $([System.IO.Path]::GetTempPath())" -Level "INFO"
+
+    try {
+        foreach ($browser in $browsers) {
+            # Zweiter Versuch fängt transiente Fehler ab (z.B. laufendes Edge-Update)
+            foreach ($attempt in 1..2) {
+                # Eigenes temporäres Browser-Profil pro Versuch verhindert Konflikte mit
+                # bereits laufenden Browser-Sitzungen (sonst startet der Headless-Prozess
+                # nur das bestehende Fenster und beendet sich, ohne ein PDF zu erzeugen)
+                $tempProfile = Join-Path ([System.IO.Path]::GetTempPath()) ("HeadlessProfile_" + [System.Guid]::NewGuid().ToString("N"))
+                try {
+                    if (Test-Path $tempPdf) { Remove-Item -Path $tempPdf -Force -ErrorAction SilentlyContinue }
+
+                    $arguments = @(
+                        "--headless"
+                        "--disable-gpu"
+                        "--no-first-run"
+                        "--no-default-browser-check"
+                        "--user-data-dir=`"$tempProfile`""
+                        "--print-to-pdf=`"$tempPdf`""
+                        "--no-margins"
+                        "`"$uri`""
+                    ) -join ' '
+
+                    # Start über .NET mit Redirect, um stderr des Browsers
+                    # im Fehlerfall mitzulogen (Diagnose)
+                    $psi = New-Object System.Diagnostics.ProcessStartInfo
+                    $psi.FileName               = $browser
+                    $psi.Arguments              = $arguments
+                    $psi.UseShellExecute        = $false
+                    $psi.RedirectStandardOutput = $true
+                    $psi.RedirectStandardError  = $true
+                    $psi.CreateNoWindow         = $true
+
+                    $proc = [System.Diagnostics.Process]::Start($psi)
+
+                    # NICHT auf den Prozess-Exit vertrauen: Manche Edge-Versionen und
+                    # Umgebungen beenden den Startprozess sofort (ExitCode 0), auch wenn
+                    # kein PDF entsteht. Stattdessen warten wir auf die fertige Datei.
+                    $deadline    = [datetime]::UtcNow.AddSeconds(120)
+                    $pdfReady    = $false
+                    $exitTime    = $null
+                    while ([datetime]::UtcNow -lt $deadline) {
+                        if ((Test-Path $tempPdf) -and ((Get-Item $tempPdf).Length -gt 0)) {
+                            # Warten bis die Dateigröße stabil ist (Schreiben abgeschlossen)
+                            $size1 = (Get-Item $tempPdf).Length
+                            Start-Sleep -Milliseconds 750
+                            if ((Test-Path $tempPdf) -and ((Get-Item $tempPdf).Length -ge $size1)) {
+                                $pdfReady = $true
+                            }
+                            break
+                        }
+                        if ($proc.HasExited) {
+                            # Nach Prozess-Exit noch kurz weiterschauen - die Datei
+                            # kann verzögert erscheinen
+                            if (-not $exitTime) { $exitTime = [datetime]::UtcNow }
+                            if ([datetime]::UtcNow -gt $exitTime.AddSeconds(10)) { break }
+                        }
+                        Start-Sleep -Milliseconds 500
+                    }
+
+                    $browserStdErr = ""
+                    try { $browserStdErr = $proc.StandardError.ReadToEnd().Trim() } catch { }
+
+                    if ($pdfReady) {
+                        # Zwischen-PDF auf den Zielpfad verschieben
+                        Move-Item -Path $tempPdf -Destination $PdfPath -Force -ErrorAction Stop
+                        if (Test-Path $PdfPath) {
+                            Write-Log -Message "PDF über Browser-Headless erstellt: $PdfPath ($browser, Versuch $attempt)" -Level "INFO"
+                            return $true
+                        }
+                    }
+
+                    if (-not $pdfReady) { try { if (-not $proc.HasExited) { $proc.Kill() } } catch { } }
+
+                    # Diagnose: Chromium schreibt bei frühen Fehlern oft nur chrome_debug.log
+                    $diagParts = @("ExitCode: $(if ($proc.HasExited) { $proc.ExitCode } else { 'unbestimmt' })")
+                    if ($browserStdErr) {
+                        $diagParts += "stderr: $($browserStdErr.Substring(0, [Math]::Min(300, $browserStdErr.Length)))"
+                    }
+                    try {
+                        $dbgLog = Join-Path $tempProfile "chrome_debug.log"
+                        if (Test-Path $dbgLog) {
+                            $tail = (Get-Content -Path $dbgLog -Tail 8 -ErrorAction SilentlyContinue) -join ' | '
+                            if ($tail) { $diagParts += "chrome_debug.log: $($tail.Substring(0, [Math]::Min(500, $tail.Length)))" }
+                        }
+                        elseif (Test-Path $tempProfile) {
+                            $diagParts += "Profilinhalt: $((Get-ChildItem -Path $tempProfile -Force -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) -join ', ')"
+                        }
+                    }
+                    catch { }
+
+                    Write-Log -Message "Browser-Headless lieferte keine PDF-Datei ($browser, Versuch $attempt, $($diagParts -join '; '))." -Level "WARNING"
+                }
+                catch {
+                    Write-Log -Message "Browser-Headless PDF-Export fehlgeschlagen ($browser, Versuch $attempt): $_" -Level "WARNING"
+                }
+                finally {
+                    # Temporäres Browser-Profil dieses Versuchs aufräumen
+                    try {
+                        if ($tempProfile -and (Test-Path $tempProfile)) {
+                            Remove-Item -Path $tempProfile -Recurse -Force -ErrorAction SilentlyContinue
+                        }
+                    }
+                    catch { }
+                }
             }
         }
     }
+    finally {
+        # Zwischen-PDF aufräumen
+        try {
+            if ($tempPdf -and (Test-Path $tempPdf)) {
+                Remove-Item -Path $tempPdf -Force -ErrorAction SilentlyContinue
+            }
+        }
+        catch { }
+    }
 
-    Write-Log -Message "PDF-Export nicht möglich (weder Word noch Edge/Chrome verfügbar)." -Level "ERROR"
+    Write-Log -Message "PDF-Export nicht möglich (weder Word noch Edge/Chrome verfügbar oder alle Versuche fehlgeschlagen)." -Level "ERROR"
     return $false
 }
 
@@ -9927,10 +10505,17 @@ function Show-DocumentationGui {
                     <TextBlock Text="__T_HEADERTITLE__" FontSize="26" FontWeight="SemiBold" Foreground="White"/>
                     <TextBlock Text="__T_HEADERSUB__" Foreground="#90CAF9" FontSize="13" Margin="0,4,0,0"/>
                 </StackPanel>
-                <!-- Version Badge -->
-                <Border Grid.Column="2" CornerRadius="6" Background="#FFFFFF22" Padding="10,6" Margin="0,0,16,0" VerticalAlignment="Center">
-                    <TextBlock Text="v2.0" Foreground="Black" FontWeight="Bold" FontSize="13"/>
-                </Border>
+                <!-- Version Badge + Update-Anzeige -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="0,0,16,0" VerticalAlignment="Center">
+                    <!-- Update-Anzeige: erscheint nur, wenn auf GitLab eine neuere Version liegt -->
+                    <Border x:Name="brdUpdate" Visibility="Collapsed" CornerRadius="6" Background="#FFF4CE" BorderBrush="#E0A800" BorderThickness="1"
+                            Padding="10,6" Margin="0,0,8,0" VerticalAlignment="Center" Cursor="Hand">
+                        <TextBlock x:Name="lblUpdate" Text="" FontSize="12" FontWeight="SemiBold" Foreground="#8A6100"/>
+                    </Border>
+                    <Border CornerRadius="6" Background="#FFFFFF22" Padding="10,6" VerticalAlignment="Center">
+                        <TextBlock Text="v2.1" Foreground="Black" FontWeight="Bold" FontSize="13"/>
+                    </Border>
+                </StackPanel>
             </Grid>
         </Border>
 
@@ -10144,6 +10729,8 @@ function Show-DocumentationGui {
         $statusBorder        = $window.FindName("StatusBorder")
         $btnStart            = $window.FindName("BtnStart")
         $btnCancel           = $window.FindName("BtnCancel")
+        $brdUpdate           = $window.FindName("brdUpdate")
+        $lblUpdate           = $window.FindName("lblUpdate")
     }
     catch {
         Write-Host (Get-LocText -Key 'GuiControlError' -FormatArgs @("$_")) -ForegroundColor Red
@@ -10384,11 +10971,427 @@ function Show-DocumentationGui {
         $window.Close()
     })
 
+    # === Update-Anzeige: asynchron prüfen, Badge nur bei neuerer Version einblenden ===
+    # Shared State (wie $state) - Hashtable-Zugriffe funktionieren zuverlässig in Event-Handlern
+    $updState = @{ Task = $null; Timer = $null; Url = $null; Tag = $null }
+    if (-not $NoUpdateCheck) {
+        $updState.Task  = Start-UpdateCheckAsync
+        $updState.Timer = New-Object System.Windows.Threading.DispatcherTimer
+        $updState.Timer.Interval = [TimeSpan]::FromMilliseconds(400)
+        $updState.Timer.Add_Tick({
+            $t = $updState.Task
+            if ($null -eq $t -or -not $t.Handle.IsCompleted) { return }
+            $updState.Timer.Stop()
+            $info = $null
+            try { $info = @($t.PowerShell.EndInvoke($t.Handle)) | Select-Object -First 1 } catch { }
+            try { $t.PowerShell.Dispose() } catch { }
+            $updState.Task = $null
+            if ($info -and $info.UpdateAvailable) {
+                $updState.Url         = $info.Url
+                $updState.Tag         = $info.LatestTag
+                $lblUpdate.Text       = (Get-LocText -Key 'UpdBadgeText' -FormatArgs @($info.LatestTag))
+                $brdUpdate.ToolTip    = (Get-LocText -Key 'UpdBadgeTip')
+                $brdUpdate.Visibility = 'Visible'
+            }
+        })
+        $updState.Timer.Start()
+        # Einklick-Update: Download, Prüfung, Austausch und Neustart in einem Schritt.
+        # Rechtsklick öffnet weiterhin die Release-Seite (z. B. für Release-Notes).
+        $brdUpdate.Add_MouseLeftButtonDown({
+            $tag = $updState.Tag
+            if (-not $tag) { if ($updState.Url) { Start-Process $updState.Url }; return }
+            if ($script:NoSelfUpdate) {
+                [void][System.Windows.MessageBox]::Show(
+                    (Get-LocText -Key 'UpdDisabled'),
+                    (Get-LocText -Key 'GuiWindowTitle'), 'OK', 'Information')
+                return
+            }
+            $msg = (Get-LocText -Key 'UpdConfirm') + "`n`n" + $tag
+            $answer = [System.Windows.MessageBox]::Show($msg, (Get-LocText -Key 'GuiWindowTitle'), 'YesNo', 'Question')
+            if ($answer -ne 'Yes') { return }
+            $brdUpdate.IsEnabled = $false
+            $lblUpdate.Text = (Get-LocText -Key 'UpdWorking')
+            $updRes = Install-SelfUpdate -Tag $tag -BoundParameters $script:LaunchParameters
+            if ($updRes.Started) {
+                [void][System.Windows.MessageBox]::Show(
+                    (Get-LocText -Key 'UpdPrepared'),
+                    (Get-LocText -Key 'GuiWindowTitle'), 'OK', 'Information')
+                [Environment]::Exit(0)
+            }
+            [void][System.Windows.MessageBox]::Show(
+                ((Get-LocText -Key 'UpdFailed') + "`n`n" + $updRes.Reason),
+                (Get-LocText -Key 'GuiWindowTitle'), 'OK', 'Warning')
+            $brdUpdate.IsEnabled = $true
+            $lblUpdate.Text = (Get-LocText -Key 'UpdBadgeText' -FormatArgs @($tag))
+        })
+        $brdUpdate.Add_MouseRightButtonUp({ if ($updState.Url) { Start-Process $updState.Url } })
+    }
+
     [void]$window.ShowDialog()
     return $script:GuiResult
 }
 
 #endregion
+
+#region ============================================================
+# UPDATE-CHECK (GitLab Releases) & SELBST-UPDATE
+#endregion ============================================================
+
+# Projekt-Pfad (URL-kodiert) und API-Endpunkte auf GitLab.
+$script:GitLabProjectPath = 'RoccoAmmon%2FExchange-Documentation'
+$script:UpdateCheckUrl    = "https://gitlab.com/api/v4/projects/$($script:GitLabProjectPath)/releases?per_page=1&order_by=released_at&sort=desc"
+# Basis-URL der Skriptdatei in der GitLab-Files-API. Die Metadaten-Antwort enthält
+# size und content_sha256 - damit lässt sich der Download prüfen, bevor irgendetwas
+# ersetzt wird.
+$script:GitLabFileApi     = "https://gitlab.com/api/v4/projects/$($script:GitLabProjectPath)/repository/files/Exchange_Documentation.ps1"
+$script:SelfUpdateLog     = Join-Path $env:TEMP 'Exchange_Documentation_Update.log'
+
+function Get-RemoteReleaseInfo {
+    <#
+    .SYNOPSIS
+        Fragt die GitLab-Releases-API nach dem neuesten Release ab.
+    .NOTES
+        Timeout 3 s. Offline, Proxy-Sperren und TLS-Probleme werden verschluckt:
+        Der Update-Check darf die Dokumentation nie verzögern oder abbrechen.
+    .OUTPUTS
+        PSCustomObject: LatestTag, LatestVersion, Url, UpdateAvailable, CurrentTag
+    #>
+    $res = [PSCustomObject]@{
+        LatestTag       = $null
+        LatestVersion   = $null
+        Url             = $null
+        UpdateAvailable = $false
+        CurrentTag      = "v$($script:ScriptVersion)"
+    }
+    try {
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $latest = Invoke-RestMethod -Uri $script:UpdateCheckUrl -TimeoutSec 3 -ErrorAction Stop | Select-Object -First 1
+        if (-not $latest) { return $res }
+        $res.LatestTag = [string]$latest.tag_name
+        if ($res.LatestTag -match 'v?(?<ver>\d+(?:\.\d+)*)') { $res.LatestVersion = [version]$matches['ver'] }
+        if ($latest._links -and $latest._links.self) { $res.Url = [string]$latest._links.self }
+        if ($res.LatestVersion -and $res.LatestVersion -gt ([version]$script:ScriptVersion)) { $res.UpdateAvailable = $true }
+    } catch { }
+    return $res
+}
+
+function Start-UpdateCheckAsync {
+    <#
+    .SYNOPSIS
+        Startet den Update-Check in einem eigenen Runspace, damit die GUI nicht einfriert.
+    .NOTES
+        Das Skriptblock-Laufwerk kennt die Hilfsfunktionen nicht - alles wird per
+        Argument übergeben und das Ergebnis per EndInvoke geholt (DispatcherTimer pollt).
+    .OUTPUTS
+        PSCustomObject: Handle (IAsyncResult), PowerShell (Instanz zum Aufräumen)
+    #>
+    $ps = [powershell]::Create()
+    [void]$ps.AddScript({
+        param($url, $currentTag)
+        $out = [PSCustomObject]@{ LatestTag = $null; Url = $null; UpdateAvailable = $false }
+        try {
+            [Net.ServicePointManager]::SecurityProtocol =
+                [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+            # Bis zu 3 Versuche mit kurzer Pause: GitLab liefert gelegentlich 503/Timeout
+            # zurück - das Resultat landet im eigenen Runspace, der Benutzer wartet nicht
+            $latest = $null
+            for ($attempt = 1; $attempt -le 3 -and -not $latest; $attempt++) {
+                if ($attempt -gt 1) { Start-Sleep -Milliseconds 750 }
+                try { $latest = Invoke-RestMethod -Uri $url -TimeoutSec 3 -ErrorAction Stop | Select-Object -First 1 } catch { }
+            }
+            if ($latest) {
+                $out.LatestTag = [string]$latest.tag_name
+                if ($latest._links -and $latest._links.self) { $out.Url = [string]$latest._links.self }
+                # Nur die Ziffern vergleichen: [version]'v2.10' wirft eine Ausnahme, die im
+                # catch landet - sonst bliebe UpdateAvailable immer $false und das Badge nie sichtbar
+                $newVer = if ($out.LatestTag -match '(?<ver>\d+(?:\.\d+)*)') { [version]$matches['ver'] } else { $null }
+                $curVer = if ($currentTag -match '(?<ver>\d+(?:\.\d+)*)') { [version]$matches['ver'] } else { $null }
+                if ($newVer -and $curVer -and $newVer -gt $curVer) { $out.UpdateAvailable = $true }
+            }
+        } catch { }
+        return $out
+    }).AddArgument($script:UpdateCheckUrl).AddArgument("v$($script:ScriptVersion)")
+    return [PSCustomObject]@{ Handle = $ps.BeginInvoke(); PowerShell = $ps }
+}
+
+# Helferprozess: wartet auf das Ende der laufenden Instanz, ersetzt die Datei,
+# prüft den Hash und startet das Skript neu. Als here-string, damit er ohne
+# weitere Abhängigkeiten in %TEMP% geschrieben werden kann.
+$script:SelfUpdateHelperScript = @'
+param([Parameter(Mandatory)][string]$Job)
+
+$ErrorActionPreference = 'Stop'
+
+# Wird der Helfer aus PowerShell 7 heraus gestartet, erbt Windows PowerShell 5.1
+# dessen PSModulePath und findet die eigenen Module nicht. Pfad daher zurücksetzen.
+if ($PSVersionTable.PSVersion.Major -le 5) {
+    $env:PSModulePath = (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\Modules') + ';' +
+                        (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules')
+}
+
+$j = Import-Clixml -LiteralPath $Job
+function Write-UpdateLog([string]$m) {
+    try { Add-Content -LiteralPath $j.Log -Value ("[{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) -ErrorAction Stop } catch { }
+}
+function Get-FileSha256([string]$Path) {
+    # Bewusst .NET statt Get-FileHash: unabhängig von Modul-Autoloading
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $fs = [System.IO.File]::OpenRead($Path)
+        try { return ([System.BitConverter]::ToString($sha.ComputeHash($fs)) -replace '-', '').ToLowerInvariant() }
+        finally { $fs.Dispose() }
+    } finally { $sha.Dispose() }
+}
+
+Write-UpdateLog ("Helfer gestartet (PID {0}); warte auf PID {1}" -f $PID, $j.Pid)
+
+# Erst wenn die aufrufende Instanz beendet ist, ist die Zieldatei sicher frei.
+if ($j.Pid -gt 0) {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalSeconds -lt 60) {
+        if (-not (Get-Process -Id $j.Pid -ErrorAction SilentlyContinue)) { break }
+        Start-Sleep -Milliseconds 300
+    }
+    Start-Sleep -Milliseconds 400
+}
+
+# Kopieren mit Wiederholung: Virenscanner und OneDrive sperren Dateien kurzzeitig.
+$copied = $false
+for ($i = 1; $i -le 10; $i++) {
+    try {
+        Copy-Item -LiteralPath $j.Source -Destination $j.Target -Force -ErrorAction Stop
+        $hash = Get-FileSha256 $j.Target
+        if ($hash -eq $j.Sha256.ToLowerInvariant()) { $copied = $true; break }
+        Write-UpdateLog ("Hash nach Kopie weicht ab (Versuch {0})" -f $i)
+    } catch {
+        Write-UpdateLog ("Kopierversuch {0} fehlgeschlagen: {1}" -f $i, $_.Exception.Message)
+    }
+    Start-Sleep -Milliseconds 700
+}
+
+if (-not $copied) {
+    Write-UpdateLog 'Update fehlgeschlagen - Backup wird zurückgespielt.'
+    try {
+        if ($j.Backup -and (Test-Path -LiteralPath $j.Backup)) {
+            Copy-Item -LiteralPath $j.Backup -Destination $j.Target -Force -ErrorAction Stop
+            Write-UpdateLog 'Backup wiederhergestellt.'
+        }
+    } catch { Write-UpdateLog ("Rollback fehlgeschlagen: {0}" -f $_.Exception.Message) }
+    exit 1
+}
+Write-UpdateLog ("Datei ersetzt: {0}" -f $j.Target)
+
+if ($j.Restart) {
+    try {
+        Start-Process -FilePath $j.Exe -ArgumentList $j.Arguments -WorkingDirectory (Split-Path -Parent $j.Target) -ErrorAction Stop
+        Write-UpdateLog ("Neustart gestartet: {0} {1}" -f $j.Exe, $j.Arguments)
+    } catch {
+        Write-UpdateLog ("Neustart fehlgeschlagen: {0}" -f $_.Exception.Message)
+        exit 2
+    }
+}
+
+Remove-Item -LiteralPath $Job -Force -ErrorAction SilentlyContinue
+exit 0
+'@
+
+function Get-UpdatePackageInfo {
+    <#
+    .SYNOPSIS
+        Holt Größe und SHA-256 der Skriptdatei eines Tags aus der GitLab-Files-API.
+    #>
+    param([Parameter(Mandatory)][string]$Tag)
+    $u = "$($script:GitLabFileApi)?ref=$([uri]::EscapeDataString($Tag))"
+    $m = Invoke-RestMethod -Uri $u -TimeoutSec 15 -ErrorAction Stop
+    [pscustomobject]@{
+        Size   = [int64]$m.size
+        Sha256 = ([string]$m.content_sha256).ToLowerInvariant()
+        Commit = [string]$m.last_commit_id
+    }
+}
+
+function Save-UpdatePackage {
+    <#
+    .SYNOPSIS
+        Lädt die Skriptdatei eines Tags nach $Path (ohne Ausführung).
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Tag,
+        [Parameter(Mandatory)][string]$Path
+    )
+    $u = "$($script:GitLabFileApi)/raw?ref=$([uri]::EscapeDataString($Tag))"
+    $old = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        Invoke-WebRequest -Uri $u -OutFile $Path -TimeoutSec 60 -UseBasicParsing -ErrorAction Stop
+    } finally { $ProgressPreference = $old }
+    return $Path
+}
+
+function Test-UpdatePackage {
+    <#
+    .SYNOPSIS
+        Prüft ein heruntergeladenes Paket, ohne es zu starten.
+    .DESCRIPTION
+        Reihenfolge: Datei vorhanden -> Größe -> SHA-256 -> Syntax -> Version.
+        Jede Stufe liefert bei einem Problem einen sprechenden Grund zurück.
+    .OUTPUTS
+        PSCustomObject: Ok, Reason, Version, Sha256
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$ExpectedSha256 = '',
+        [int64]$ExpectedSize = 0,
+        [string]$CurrentVersion = $script:ScriptVersion
+    )
+    $r = [pscustomobject]@{ Ok = $false; Reason = ''; Version = ''; Sha256 = '' }
+    if (-not (Test-Path -LiteralPath $Path)) { $r.Reason = (Get-LocText -Key 'UpdRFileMissing'); return $r }
+    $fi = Get-Item -LiteralPath $Path
+    if ($fi.Length -le 0) { $r.Reason = (Get-LocText -Key 'UpdREmpty'); return $r }
+    if ($ExpectedSize -gt 0 -and $fi.Length -ne $ExpectedSize) {
+        $r.Reason = (Get-LocText -Key 'UpdRSize' -FormatArgs @($ExpectedSize, $fi.Length)); return $r
+    }
+    $sha = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    $r.Sha256 = $sha
+    if ($ExpectedSha256 -and $sha -ne $ExpectedSha256.ToLowerInvariant()) {
+        $r.Reason = (Get-LocText -Key 'UpdRHash'); return $r
+    }
+    $errs = $null
+    [void][System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$errs)
+    if ($errs -and $errs.Count -gt 0) {
+        $r.Reason = (Get-LocText -Key 'UpdRSyntax' -FormatArgs @($errs.Count, $errs[0].Message)); return $r
+    }
+    $txt = [System.IO.File]::ReadAllText($Path)
+    $m = [regex]::Match($txt, '\$script:ScriptVersion\s*=\s*"([0-9][0-9\.]*)"')
+    if (-not $m.Success) { $r.Reason = (Get-LocText -Key 'UpdRNoVersion'); return $r }
+    $r.Version = $m.Groups[1].Value
+    if (-not ($r.Version -as [version])) { $r.Reason = (Get-LocText -Key 'UpdRBadVersion'); return $r }
+    if ([version]$r.Version -le [version]$CurrentVersion) {
+        $r.Reason = (Get-LocText -Key 'UpdRNotNewer' -FormatArgs @($r.Version, $CurrentVersion)); return $r
+    }
+    $r.Ok = $true
+    return $r
+}
+
+function Get-RestartCommand {
+    <#
+    .SYNOPSIS
+        Baut Programm und Argumentliste für einen Neustart dieses Skripts
+        mit den ursprünglich übergebenen Parametern (nach dem Selbst-Update).
+    #>
+    param([Parameter(Mandatory)][string]$ScriptPath)
+    $exe = $null
+    try { $exe = (Get-Process -Id $PID).Path } catch {}
+    # ISE oder Editor-Host: lieber die klassische powershell.exe verwenden
+    if (-not $exe -or $exe -match '(?i)powershell_ise|Code\.exe|WindowsTerminal|openconsole') {
+        $exe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    }
+    if (-not (Test-Path -LiteralPath $exe)) { $exe = 'powershell.exe' }
+    $command     = "& '{0}' {1}" -f $ScriptPath, ((Get-ScriptArgumentList) -join ' ')
+    $arguments   = '-NoProfile -ExecutionPolicy Bypass -Command "{0}"' -f $command
+    [pscustomobject]@{ Exe = $exe; Arguments = $arguments }
+}
+
+function Install-SelfUpdate {
+    <#
+    .SYNOPSIS
+        Lädt die angegebene Version, prüft sie, ersetzt die laufende Datei und startet neu.
+    .DESCRIPTION
+        Es wird nichts ersetzt, bevor Download, SHA-256, Syntax und Version geprüft
+        sind. Vor dem Austausch entsteht ein Backup neben dem Skript. Der Austausch
+        selbst läuft in einem Helferprozess, weil eine laufende Datei nicht
+        zuverlässig überschrieben werden kann.
+    .OUTPUTS
+        PSCustomObject: Started, Reason, Target, Backup, Version
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Tag,
+        [hashtable]$BoundParameters = @{},
+        [switch]$NoRestart
+    )
+    $res = [pscustomobject]@{ Started = $false; Reason = ''; Target = ''; Backup = ''; Version = '' }
+    if ($script:NoSelfUpdate) { $res.Reason = (Get-LocText -Key 'UpdReasonDisabled'); return $res }
+    $target = $PSCommandPath
+    if (-not $target) { $res.Reason = (Get-LocText -Key 'UpdReasonNoPath'); return $res }
+    $target = [System.IO.Path]::GetFullPath($target)
+    $res.Target = $target
+    $dir = Split-Path -Parent $target
+
+    # Schreibrechte vorher prüfen - lieber sauber abbrechen als halb ersetzen.
+    try {
+        $probe = Join-Path $dir (".exchdoc_write_{0}.tmp" -f [guid]::NewGuid().ToString('N').Substring(0, 6))
+        Set-Content -LiteralPath $probe -Value 'probe' -ErrorAction Stop
+        Remove-Item -LiteralPath $probe -Force -ErrorAction Stop
+    } catch {
+        $res.Reason = (Get-LocText -Key 'UpdReasonNoDir' -FormatArgs @($dir)); return $res
+    }
+
+    # 1) Metadaten + Download
+    $temp = Join-Path $env:TEMP ("Exchange_Documentation_Update_{0}.ps1" -f $Tag)
+    try {
+        $meta = Get-UpdatePackageInfo -Tag $Tag
+        [void](Save-UpdatePackage -Tag $Tag -Path $temp)
+    } catch {
+        $res.Reason = (Get-LocText -Key 'UpdReasonDownload' -FormatArgs @("$($_.Exception.Message)")); return $res
+    }
+
+    # 2) Paket prüfen (Hash, Syntax, Version)
+    $chk = Test-UpdatePackage -Path $temp -ExpectedSha256 $meta.Sha256 -ExpectedSize $meta.Size
+    if (-not $chk.Ok) { $res.Reason = (Get-LocText -Key 'UpdReasonPackage' -FormatArgs @($chk.Reason)); return $res }
+    $res.Version = $chk.Version
+
+    # 3) Backup der laufenden Datei
+    $backup = "$target.bak-$($script:ScriptVersion)"
+    try {
+        Copy-Item -LiteralPath $target -Destination $backup -Force -ErrorAction Stop
+        $res.Backup = $backup
+    } catch {
+        $res.Reason = (Get-LocText -Key 'UpdReasonBackup' -FormatArgs @("$($_.Exception.Message)")); return $res
+    }
+
+    # 4) Helferprozess vorbereiten
+    $exe = $null
+    try { $exe = (Get-Process -Id $PID).Path } catch { }
+    if (-not $exe -or $exe -match '(?i)powershell_ise|Code\.exe|WindowsTerminal|openconsole') {
+        $exe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    }
+    if (-not (Test-Path -LiteralPath $exe)) { $exe = 'powershell.exe' }
+    $restartArgs = ''
+    if (-not $NoRestart) {
+        $restartArgs = (Get-RestartCommand -ScriptPath $target).Arguments
+    }
+    $jobPath    = Join-Path $env:TEMP ("Exchange_Documentation_Update_{0}.job.xml" -f $Tag)
+    $helperPath = Join-Path $env:TEMP ("Exchange_Documentation_Update_{0}.helper.ps1" -f $Tag)
+    $job = [pscustomobject]@{
+        Pid       = $PID
+        Source    = $temp
+        Target    = $target
+        Sha256    = $chk.Sha256
+        Backup    = $backup
+        Exe       = $exe
+        Arguments = $restartArgs
+        Restart   = (-not $NoRestart)
+        Log       = $script:SelfUpdateLog
+    }
+    try {
+        $job | Export-Clixml -LiteralPath $jobPath -ErrorAction Stop
+        Set-Content -LiteralPath $helperPath -Value $script:SelfUpdateHelperScript -Encoding UTF8 -ErrorAction Stop
+    } catch {
+        $res.Reason = (Get-LocText -Key 'UpdReasonHelper' -FormatArgs @("$($_.Exception.Message)")); return $res
+    }
+
+    # 5) Helfer starten - erwartet das Ende dieser Instanz
+    $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+                '-File', ('"{0}"' -f $helperPath), '-Job', ('"{0}"' -f $jobPath))
+    try {
+        Start-Process -FilePath $exe -ArgumentList $psArgs -WindowStyle Hidden -ErrorAction Stop
+    } catch {
+        $res.Reason = (Get-LocText -Key 'UpdReasonHelperStart' -FormatArgs @("$($_.Exception.Message)")); return $res
+    }
+    $res.Started = $true
+    return $res
+}
 
 #region ============================================================
 # HAUPTPROGRAMM
@@ -10409,6 +11412,31 @@ try {
 
     # Standardauswahl der Sektionen (alle), falls keine angegeben
     $selectedSectionKeys = if ($Sections) { $Sections } else { (Get-DocSectionRegistry).Key }
+
+    # Update-Check (Konsole: Info-zeile + optionales Selbst-Update; GUI: Badge)
+    # Fehler, Offline und Proxy-Sperren bleiben folgenlos (Timeout 3 s)
+    if (-not $useGui -and -not $NoUpdateCheck) {
+        $upd = Get-RemoteReleaseInfo
+        if ($upd.UpdateAvailable) {
+            Write-Host ((Get-LocText -Key 'UpdAvailable' -FormatArgs @($upd.LatestTag, $script:ScriptVersion)) + $(if ($upd.Url) { " - $($upd.Url)" } else { "" })) -ForegroundColor Yellow
+            # Self-Update nur auf ausdrückliche Bestätigung und nur in einer
+            # interaktiven Sitzung - nie still im Hintergrund.
+            if (-not $NoSelfUpdate -and [Environment]::UserInteractive) {
+                $updAnswer = Read-Host (Get-LocText -Key 'UpdPrompt')
+                if ($updAnswer -match '^(j|ja|y|yes)$') {
+                    Write-Host (Get-LocText -Key 'UpdInstallInfo') -ForegroundColor Cyan
+                    $updRes = Install-SelfUpdate -Tag $upd.LatestTag -BoundParameters $script:LaunchParameters
+                    if ($updRes.Started) {
+                        Write-Host (Get-LocText -Key 'UpdPreparedInfo') -ForegroundColor Green
+                        Start-Sleep -Seconds 2
+                        [Environment]::Exit(0)
+                    }
+                    Write-Host ((Get-LocText -Key 'UpdNotPossible') + " $($updRes.Reason)") -ForegroundColor Red
+                    if ($upd.Url) { Write-Host ((Get-LocText -Key 'UpdReleasePage') + $upd.Url) -ForegroundColor Yellow }
+                }
+            }
+        }
+    }
 
     if ($useGui) {
         $guiConfig = $null
@@ -10503,20 +11531,97 @@ try {
     $script:DocTitle = Get-LocText -Key 'DocTitleEdition' -FormatArgs @($script:ExchangeEdition)
 
     # ============================================================
-    # 3. KONNEKTIVITÄTSTEST
+    # 3. KONNEKTIVITÄTSTEST (Parallel mit TCP-Fallback, Timeout 5s pro Server)
     # ============================================================
     Write-Log -Message (Get-LocText -Key 'CheckReachability') -Level "INFO"
-    foreach ($server in $ExchangeServers) {
+    
+    $script:TestServerReachable = {
+        param($srv)
+        $result = @{ Server = $srv; Reachable = $false; Method = '' }
+        # 1. ICMP-Ping (Timeout 2s, 1 Versuch)
         try {
-            if (-not (Test-Connection -ComputerName $server -Count 2 -Quiet -ErrorAction Stop)) {
-                Write-Log -Message (Get-LocText -Key 'ServerUnreachable' -FormatArgs @($server)) -Level "WARNING"
+            if (Test-Connection -ComputerName $srv -Count 1 -Quiet -TimeoutSeconds 2 -ErrorAction Stop) {
+                $result.Reachable = $true
+                $result.Method = 'ICMP'
+                return $result
             }
-            else {
-                Write-Log -Message (Get-LocText -Key 'ServerReachable' -FormatArgs @($server)) -Level "INFO"
+        } catch { }
+        
+        # 2. TCP-Fallback: RPC Port 135 (Timeout 3s)
+        try {
+            $tcp = New-Object System.Net.Sockets.TcpClient
+            $async = $tcp.BeginConnect($srv, 135, $null, $null)
+            $wait = $async.AsyncWaitHandle.WaitOne(3000)
+            if ($wait -and $tcp.Connected) {
+                $tcp.Close()
+                $result.Reachable = $true
+                $result.Method = 'TCP/135'
+                return $result
+            }
+            $tcp.Close()
+        } catch { }
+        
+        # 3. TCP-Fallback: HTTPS 443 (Timeout 3s)
+        try {
+            $tcp = New-Object System.Net.Sockets.TcpClient
+            $async = $tcp.BeginConnect($srv, 443, $null, $null)
+            $wait = $async.AsyncWaitHandle.WaitOne(3000)
+            if ($wait -and $tcp.Connected) {
+                $tcp.Close()
+                $result.Reachable = $true
+                $result.Method = 'TCP/443'
+                return $result
+            }
+            $tcp.Close()
+        } catch { }
+        
+        return $result
+    }
+    
+    $reachabilityJobs = @()
+    foreach ($server in $ExchangeServers) {
+        $reachabilityJobs += Start-Job -Name $server -ScriptBlock $script:TestServerReachable -ArgumentList $server
+    }
+    
+    # Warte auf alle Jobs (max 15s gesamt)
+    $timeout = 15
+    $start = Get-Date
+    $stillRunning = $true
+    while ($stillRunning) {
+        $stillRunning = $false
+        foreach ($j in $reachabilityJobs) {
+            if ($j.State -eq 'Running') {
+                $stillRunning = $true
+                break
             }
         }
-        catch {
-            Write-Log -Message (Get-LocText -Key 'PingFailed' -FormatArgs @($server, "$_")) -Level "WARNING"
+        if (-not $stillRunning) { break }
+        $elapsed = (Get-Date) - $start
+        if ($elapsed.TotalSeconds -gt $timeout) {
+            foreach ($j in $reachabilityJobs) {
+                if ($j.State -eq 'Running') {
+                    Stop-Job -Job $j -ErrorAction SilentlyContinue
+                    Remove-Job -Job $j -Force -ErrorAction SilentlyContinue
+                }
+            }
+            break
+        }
+        Start-Sleep -Milliseconds 200
+    }
+    
+    # Ergebnisse sammeln
+    foreach ($job in $reachabilityJobs) {
+        try {
+            $result = $job | Receive-Job -ErrorAction SilentlyContinue | Where-Object { $_ -is [hashtable] } | Select-Object -Last 1
+        } catch {
+            $result = $null
+        }
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        if ($result -and $result.Reachable) {
+            Write-Log -Message (Get-LocText -Key 'ServerReachable' -FormatArgs @($result.Server, $result.Method)) -Level "INFO"
+        } else {
+            $srvName = if ($result -and $result.Server) { $result.Server } else { $job.Name }
+            Write-Log -Message (Get-LocText -Key 'ServerUnreachable' -FormatArgs @($srvName)) -Level "WARNING"
         }
     }
 
@@ -10611,5 +11716,6 @@ finally {
 }
 
 #endregion
+
 
 
