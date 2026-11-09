@@ -5,6 +5,24 @@
 
 ---
 
+## [2.2] - 2026-11-09
+
+**DE**
+- 📄 **PDF-Export verbessert**
+  - Standardmäßig **A4-Querformat** (`-PdfOrientation Landscape|Portrait`, GUI-Umschalter)
+  - Word-COM: Seiteneinrichtung (A4, Ausrichtung, Ränder) wird explizit gesetzt
+  - Word-COM: Tabellen werden auf Seitenbreite eingepasst, dürfen über Seiten umbrechen und wiederholen ihre Kopfzeile
+  - Druck-CSS: `@page`-Format, Umbruch langer Tabellen, wiederholte Tabellenköpfe, Umbruch langer Wörter/URLs
+
+**EN**
+- 📄 **Improved PDF export**
+  - **A4 landscape** by default (`-PdfOrientation Landscape|Portrait`, GUI toggle)
+  - Word COM: page setup (A4, orientation, margins) is applied explicitly
+  - Word COM: tables are fitted to page width, may break across pages, and repeat their header row
+  - Print CSS: `@page` size, page breaks for long tables, repeated table headers, wrapping of long words/URLs
+
+---
+
 ## [2.1] - 2026-11-01
 
 **DE**

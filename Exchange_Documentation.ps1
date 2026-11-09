@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Exchange On-Premises Dokumentations-Skript (v2.1 - Exchange 2013/2016/2019 & SE Support, DE/EN)
+    Exchange On-Premises Dokumentations-Skript (v2.2 - Exchange 2013/2016/2019 & SE Support, DE/EN)
 .DESCRIPTION
     Erstellt eine umfassende HTML-Dokumentation der gesamten Exchange On-Premises Umgebung.
     Unterstützt Exchange Server 2019 und Exchange Server Subscription Edition (SE).
@@ -9,6 +9,14 @@
     WICHTIG: Diese Version verwendet CIM-Sessions mit automatischem DCOM-Fallback,
     sodass das Skript auch funktioniert, wenn WinRM (PowerShell Remoting) nicht
     korrekt konfiguriert ist.
+
+    NEU in v2.2 (PDF-Qualität):
+    - PDF standardmäßig im A4-Querformat; Hochformat über -PdfOrientation Portrait
+      oder den Umschalter in der GUI weiterhin möglich
+    - Lange Tabellen brechen sauber über Seiten um, Tabellenköpfe werden wiederholt,
+      lange Wörter/URLs werden umbrochen
+    - Word-COM-Export setzt Papierformat, Ausrichtung und Ränder explizit und passt
+      Tabellen auf die Seitenbreite ein
 
     NEU in v2.1 (Self-Update & Stabilität):
     - Automatisches Self-Update – Prüfung gegen GitLab Releases + In-Skript-Update
@@ -206,10 +214,12 @@
 
 .NOTES
     Autor:           Rocco Ammon
-    Version:         2.1
+    Version:         2.2
     Erstellt:        2026-03-05
-    Letzte Änderung: 2026-11-01
-    Änderungen:      v2.1 - Self-Update (GitLab Releases), Update-Badge, paralleler
+    Letzte Änderung: 2026-11-09
+    Änderungen:      v2.2 - PDF-Export: A4-Querformat, Tabellenumbruch, Word-Seiten-
+                     und Tabellenanpassung, neuer Parameter -PdfOrientation
+                     v2.1 - Self-Update (GitLab Releases), Update-Badge, paralleler
                      Erreichbarkeits-Check, DE/EN-Vollständigkeit, Build-Katalog Oct26SU
                      v2.0 - Mehrsprachigkeit (DE/EN) für Skript, GUI und Reports
                      v1.7 - Erweiterte System- & Sicherheitschecks:
@@ -276,6 +286,10 @@ param(
     [ValidateSet("HTML", "PDF", "Markdown")]
     [string[]]$OutputFormats = @("HTML"),
 
+    [Parameter(Mandatory = $false, HelpMessage = "PDF-Seitenausrichtung: Landscape (Querformat, Standard) oder Portrait (Hochformat)")]
+    [ValidateSet("Landscape", "Portrait")]
+    [string]$PdfOrientation = "Landscape",
+
     [Parameter(Mandatory = $false, HelpMessage = "Liste der zu erstellenden Sektions-Schlüssel. Leer = alle")]
     [string[]]$Sections,
 
@@ -321,10 +335,10 @@ $script:LocUI = @{
     WarningsLabel        = @{ DE = "Warnungen"; EN = "Warnings" }
     DetectedEdition      = @{ DE = "Erkannte Edition"; EN = "Detected edition" }
     VersionLabel         = @{ DE = "Version"; EN = "Version" }
-    VersionSuffix        = @{ DE = "2.0 (Exchange 2013/2016/2019 &amp; SE / CIM-DCOM Fallback)"; EN = "2.0 (Exchange 2013/2016/2019 &amp; SE / CIM-DCOM fallback)" }
-    GeneratorMeta        = @{ DE = "Exchange Dokumentations-Skript v2.1"; EN = "Exchange Documentation Script v2.1" }
+    VersionSuffix        = @{ DE = "2.2 (Exchange 2013/2016/2019 &amp; SE / CIM-DCOM Fallback)"; EN = "2.2 (Exchange 2013/2016/2019 &amp; SE / CIM-DCOM fallback)" }
+    GeneratorMeta        = @{ DE = "Exchange Dokumentations-Skript v2.2"; EN = "Exchange Documentation Script v2.2" }
     FooterCreated        = @{ DE = "Erstellt"; EN = "Created" }
-    FooterTool           = @{ DE = "PowerShell Dokumentation v2.1"; EN = "PowerShell Documentation v2.1" }
+    FooterTool           = @{ DE = "PowerShell Dokumentation v2.2"; EN = "PowerShell Documentation v2.2" }
     HtmlLang             = @{ DE = "de"; EN = "en" }
     NoDataDefault        = @{ DE = "Keine Daten verfügbar."; EN = "No data available." }
     BuildHtmlDoc         = @{ DE = "=== Erstelle HTML-Dokument ==="; EN = "=== Building HTML document ===" }
@@ -332,10 +346,11 @@ $script:LocUI = @{
     GenHtml              = @{ DE = "=== Generiere HTML-Dokument ==="; EN = "=== Generating HTML document ===" }
     GenPdf               = @{ DE = "=== Generiere PDF-Dokument ==="; EN = "=== Generating PDF document ===" }
     GenMd                = @{ DE = "=== Generiere Markdown-Dokument ==="; EN = "=== Generating Markdown document ===" }
-    StartBanner          = @{ DE = "Exchange Dokumentation gestartet (v2.1 - 2013/2016/2019/SE)"; EN = "Exchange documentation started (v2.1 - 2013/2016/2019/SE)" }
+    StartBanner          = @{ DE = "Exchange Dokumentation gestartet (v2.2 - 2013/2016/2019/SE)"; EN = "Exchange documentation started (v2.2 - 2013/2016/2019/SE)" }
     TargetServers        = @{ DE = "Zielserver: {0}"; EN = "Target servers: {0}" }
     OutputPathLog        = @{ DE = "Ausgabepfad: {0}"; EN = "Output path: {0}" }
     OutputFormatsLog     = @{ DE = "Ausgabeformate: {0}"; EN = "Output formats: {0}" }
+    PdfOrientationLog    = @{ DE = "PDF-Ausrichtung: {0}"; EN = "PDF orientation: {0}" }
     SelectedSectionsLog  = @{ DE = "Gewählte Sektionen: {0}"; EN = "Selected sections: {0}" }
     ConnectionModeLog    = @{ DE = "Verbindungsmodus: CIM mit automatischem DCOM Fallback"; EN = "Connection mode: CIM with automatic DCOM fallback" }
     LanguageLog          = @{ DE = "Sprache: Deutsch (DE)"; EN = "Language: English (EN)" }
@@ -352,7 +367,7 @@ $script:LocUI = @{
     FileLog              = @{ DE = "Datei: {0}"; EN = "File: {0}" }
     LogFileLog           = @{ DE = "Log-Datei: {0}"; EN = "Log file: {0}" }
     ErrWarnLog           = @{ DE = "Fehler: {0} | Warnungen: {1}"; EN = "Errors: {0} | Warnings: {1}" }
-    ConsoleDone          = @{ DE = "  Exchange Dokumentation abgeschlossen! (v2.1 - 2013/2016/2019/SE)"; EN = "  Exchange documentation completed! (v2.1 - 2013/2016/2019/SE)" }
+    ConsoleDone          = @{ DE = "  Exchange Dokumentation abgeschlossen! (v2.2 - 2013/2016/2019/SE)"; EN = "  Exchange documentation completed! (v2.2 - 2013/2016/2019/SE)" }
     ConsoleFile          = @{ DE = "  Datei: {0}"; EN = "  File: {0}" }
     ConsoleLogFile       = @{ DE = "  Log-Datei:  {0}"; EN = "  Log file:   {0}" }
     ConsoleErrWarn       = @{ DE = "  Fehler:     {0} | Warnungen: {1}"; EN = "  Errors:     {0} | Warnings: {1}" }
@@ -365,7 +380,7 @@ $script:LocUI = @{
     NoServersGiven       = @{ DE = "Keine Exchange-Server angegeben. Bitte -ExchangeServers verwenden oder die GUI nutzen."; EN = "No Exchange servers specified. Please use -ExchangeServers or the GUI." }
     CancelledByUser      = @{ DE = "Abgebrochen durch Benutzer (GUI)."; EN = "Cancelled by user (GUI)." }
     # --- GUI ---
-    GuiWindowTitle       = @{ DE = "Exchange Server Dokumentation v2.1"; EN = "Exchange Server Documentation v2.1" }
+    GuiWindowTitle       = @{ DE = "Exchange Server Dokumentation v2.2"; EN = "Exchange Server Documentation v2.2" }
     GuiHeaderTitle       = @{ DE = "Exchange Server Dokumentation"; EN = "Exchange Server Documentation" }
     GuiHeaderSubtitle    = @{ DE = "System-Checks · TLS/SSL · Multi-Format Export · Mehrsprachig (DE/EN)"; EN = "System checks · TLS/SSL · Multi-format export · Multilingual (DE/EN)" }
     GuiExchangeServer    = @{ DE = "Exchange Server"; EN = "Exchange Server" }
@@ -374,6 +389,9 @@ $script:LocUI = @{
     GuiOutputPath        = @{ DE = "Ausgabepfad"; EN = "Output path" }
     GuiBrowseTooltip     = @{ DE = "Ausgabeverzeichnis wählen"; EN = "Choose output directory" }
     GuiOutputFormats     = @{ DE = "Ausgabeformate"; EN = "Output formats" }
+    GuiPdfOrientation    = @{ DE = "PDF-Ausrichtung"; EN = "PDF orientation" }
+    GuiPdfLandscape      = @{ DE = "Querformat"; EN = "Landscape" }
+    GuiPdfPortrait       = @{ DE = "Hochformat"; EN = "Portrait" }
     GuiSections          = @{ DE = "Dokumentationsbereiche"; EN = "Documentation areas" }
     GuiLanguage          = @{ DE = "Sprache / Language"; EN = "Language / Sprache" }
     GuiLangGerman        = @{ DE = "Deutsch"; EN = "German" }
@@ -1621,7 +1639,7 @@ Write-Host (Get-LocText -Key 'AdminConfirmed') -ForegroundColor Green
 #endregion ============================================================
 
 # --- Skriptversion (Basis für Update-Check & Selbst-Update) ---
-$script:ScriptVersion           = "2.1"
+$script:ScriptVersion           = "2.2"
 
 # --- Startparameter (für den Neustart nach dem Selbst-Update) ---
 $script:LaunchParameters        = $PSBoundParameters
@@ -9497,11 +9515,29 @@ function Build-HTMLDocument {
     <#
     .SYNOPSIS
         Baut das finale HTML-Dokument mit Deckblatt, Inhaltsverzeichnis und allen Sektionen.
+    .PARAMETER PdfOrientation
+        Seitenausrichtung für den PDF-Druck: Landscape (Querformat) oder Portrait (Hochformat).
+        Wird als @page-Regel ins Druck-CSS geschrieben.
     #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [ValidateSet("Landscape", "Portrait")]
+        [string]$PdfOrientation = "Landscape"
+    )
+
     Write-Log -Message (Get-LocText -Key 'BuildHtmlDoc') -Level "INFO"
+
+    # A4-Querformat gibt breiten Tabellen deutlich mehr Platz (297 mm statt 210 mm).
+    $pageSize    = if ($PdfOrientation -eq "Portrait") { "A4 portrait" } else { "A4 landscape" }
+    $printMargin = if ($PdfOrientation -eq "Portrait") { "15mm" } else { "10mm" }
 
     $cssStyle = @"
     <style>
+        @page {
+            size: $pageSize;
+            margin: 0;
+        }
         body {
             font-family: 'Segoe UI', Calibri, Arial, sans-serif;
             font-size: 11pt;
@@ -9601,12 +9637,16 @@ function Build-HTMLDocument {
             padding: 8px 10px;
             font-weight: bold;
             border: 1px solid #005A9E;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
         td {
             padding: 6px 10px;
             border: 1px solid #DDDDDD;
             vertical-align: top;
             word-wrap: break-word;
+            overflow-wrap: anywhere;
+            word-break: break-word;
             max-width: 300px;
         }
         tr.even { background-color: #F5F5F5; }
@@ -9647,12 +9687,16 @@ function Build-HTMLDocument {
             margin-top: 40px;
         }
         @media print {
-            body { margin: 20px; line-height: 1.4; font-size: 9pt; }
+            body { margin: $printMargin; line-height: 1.4; font-size: 9pt; }
             h1, h2, h3, h4 { orphans: 3; widows: 3; }
-            h2 { page-break-before: auto; margin-top: 0; }
+            h2 { page-break-before: auto; margin-top: 0; page-break-after: avoid; }
+            h3, h4 { page-break-after: avoid; }
             h3.server-break { page-break-inside: avoid; page-break-before: auto; }
-            .section { page-break-inside: avoid; margin-bottom: 15px; }
-            table { page-break-inside: avoid; margin: 8px 0 15px 0; }
+            /* Sektionen und Tabellen duerfen umbrechen - sonst werden lange Tabellen
+               abgeschnitten oder aus der Seite geschoben. Zeilen bleiben zusammen,
+               die Kopfzeile wird auf jeder Folgeseite wiederholt. */
+            .section { margin-bottom: 15px; }
+            table { page-break-inside: auto; margin: 8px 0 15px 0; }
             tr { page-break-inside: avoid; }
             thead { display: table-header-group; }
             tfoot { display: table-footer-group; }
@@ -9972,11 +10016,16 @@ function Export-DocumentToPdf {
         Pfad zur HTML-Quelldatei.
     .PARAMETER PdfPath
         Ziel-Pfad der PDF-Datei.
+    .PARAMETER Orientation
+        Seitenausrichtung: Landscape (Querformat) oder Portrait (Hochformat).
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)] [string]$HtmlPath,
-        [Parameter(Mandatory = $true)] [string]$PdfPath
+        [Parameter(Mandatory = $true)] [string]$PdfPath,
+        [Parameter(Mandatory = $false)]
+        [ValidateSet("Landscape", "Portrait")]
+        [string]$Orientation = "Landscape"
     )
 
     # --- Methode 1: Microsoft Word COM ---
@@ -9986,11 +10035,54 @@ function Export-DocumentToPdf {
     try {
         $word = New-Object -ComObject Word.Application -ErrorAction Stop
         $word.Visible = $false
+        # Hintergrundfarben (z. B. blauer Tabellenkopf) beim PDF-Export beibehalten
+        try { $word.Options.PrintBackgrounds = $true } catch { }
+
         $doc = $word.Documents.Open($HtmlPath)
+
+        # Seiteneinrichtung: Word ignoriert CSS-Regeln wie @page/max-width beim
+        # HTML-Import. Deshalb Papierformat, Ausrichtung und Ränder explizit setzen.
+        try {
+            $doc.PageSetup.PaperSize = 9   # wdPaperA4
+            $doc.PageSetup.Orientation = if ($Orientation -eq "Portrait") { 0 } else { 1 }  # wdOrientPortrait/wdOrientLandscape
+
+            # 1 cm = 28,35 pt - schmale Ränder schaffen Platz für breite Tabellen
+            $marginPt = 28.35
+            $doc.PageSetup.TopMargin      = $marginPt
+            $doc.PageSetup.BottomMargin   = $marginPt
+            $doc.PageSetup.LeftMargin     = $marginPt
+            $doc.PageSetup.RightMargin    = $marginPt
+            $doc.PageSetup.HeaderDistance = 14
+            $doc.PageSetup.FooterDistance = 14
+        }
+        catch {
+            Write-Log -Message "Word-Seiteneinrichtung konnte nicht gesetzt werden: $($_.Exception.Message)" -Level "WARNING"
+        }
+
+        # Tabellen auf die Seitenbreite einpassen, Zeilenumbruch erlauben und die
+        # Kopfzeile auf Folgeseiten wiederholen. Verhindert, dass breite Tabellen
+        # aus der Seite laufen oder beim Seitenwechsel abgeschnitten werden.
+        try {
+            foreach ($tbl in $doc.Tables) {
+                try {
+                    $tbl.AllowAutoFit = $true
+                    $tbl.AutoFitBehavior(2)        # wdAutoFitWindow
+                    $tbl.PreferredWidthType = 2    # wdPreferredWidthPercent
+                    $tbl.PreferredWidth = 100
+                    try { $tbl.Rows.AllowBreakAcrossPages = $true } catch { }
+                    try { $tbl.Rows.Item(1).HeadingFormat = $true } catch { }
+                }
+                catch { }
+            }
+        }
+        catch {
+            Write-Log -Message "Word-Tabellenanpassung teilweise fehlgeschlagen: $($_.Exception.Message)" -Level "WARNING"
+        }
+
         # 17 = wdFormatPDF
         $doc.SaveAs([ref]$PdfPath, [ref]17)
         $doc.Close($false)
-        Write-Log -Message "PDF über Microsoft Word erstellt: $PdfPath" -Level "INFO"
+        Write-Log -Message "PDF über Microsoft Word erstellt ($Orientation, A4): $PdfPath" -Level "INFO"
         return $true
     }
     catch {
@@ -10191,7 +10283,9 @@ function Show-DocumentationGui {
     param(
         [string]$DefaultServers,
         [string]$DefaultCompany,
-        [string]$DefaultOutputPath
+        [string]$DefaultOutputPath,
+        [ValidateSet("Landscape", "Portrait")]
+        [string]$DefaultPdfOrientation = "Landscape"
     )
 
     try {
@@ -10513,7 +10607,7 @@ function Show-DocumentationGui {
                         <TextBlock x:Name="lblUpdate" Text="" FontSize="12" FontWeight="SemiBold" Foreground="#8A6100"/>
                     </Border>
                     <Border CornerRadius="6" Background="#FFFFFF22" Padding="10,6" VerticalAlignment="Center">
-                        <TextBlock Text="v2.1" Foreground="Black" FontWeight="Bold" FontSize="13"/>
+                        <TextBlock Text="v2.2" Foreground="Black" FontWeight="Bold" FontSize="13"/>
                     </Border>
                 </StackPanel>
             </Grid>
@@ -10619,6 +10713,11 @@ function Show-DocumentationGui {
                         <ToggleButton Name="ChkPdf" Content="PDF" Style="{StaticResource FormatToggleStyle}"/>
                         <ToggleButton Name="ChkMarkdown" Content="Markdown" Style="{StaticResource FormatToggleStyle}"/>
                     </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <TextBlock Text="__T_PDFORIENT__" FontSize="12" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <ToggleButton Name="ChkPdfLandscape" Content="__T_PDFLANDSCAPE__" Style="{StaticResource FormatToggleStyle}" IsChecked="True"/>
+                        <ToggleButton Name="ChkPdfPortrait" Content="__T_PDFPORTRAIT__" Style="{StaticResource FormatToggleStyle}"/>
+                    </StackPanel>
                 </StackPanel>
                 <StackPanel Grid.Column="1">
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
@@ -10689,6 +10788,9 @@ function Show-DocumentationGui {
         '__T_OUTPATH__'     = Get-LocText -Key 'GuiOutputPath'
         '__T_BROWSE__'      = Get-LocText -Key 'GuiBrowseTooltip'
         '__T_FORMATS__'     = Get-LocText -Key 'GuiOutputFormats'
+        '__T_PDFORIENT__'   = Get-LocText -Key 'GuiPdfOrientation'
+        '__T_PDFLANDSCAPE__'= Get-LocText -Key 'GuiPdfLandscape'
+        '__T_PDFPORTRAIT__' = Get-LocText -Key 'GuiPdfPortrait'
         '__T_LANGUAGE__'    = Get-LocText -Key 'GuiLanguage'
         '__T_LANGDE__'      = Get-LocText -Key 'GuiLangGerman'
         '__T_LANGEN__'      = Get-LocText -Key 'GuiLangEnglish'
@@ -10721,6 +10823,8 @@ function Show-DocumentationGui {
         $chkHtml             = $window.FindName("ChkHtml")
         $chkPdf              = $window.FindName("ChkPdf")
         $chkMarkdown         = $window.FindName("ChkMarkdown")
+        $chkPdfLandscape     = $window.FindName("ChkPdfLandscape")
+        $chkPdfPortrait      = $window.FindName("ChkPdfPortrait")
         $chkLangDe           = $window.FindName("ChkLangDe")
         $chkLangEn           = $window.FindName("ChkLangEn")
         $chkSelectAll        = $window.FindName("ChkSelectAll")
@@ -10742,6 +10846,18 @@ function Show-DocumentationGui {
     $txtOutputPath.Text = $DefaultOutputPath
     $chkLangDe.IsChecked = ($script:UILanguage -eq "DE")
     $chkLangEn.IsChecked = ($script:UILanguage -eq "EN")
+
+    # PDF-Ausrichtung: Quer-/Hochformat schließen sich gegenseitig aus
+    $chkPdfLandscape.IsChecked = ($DefaultPdfOrientation -ne "Portrait")
+    $chkPdfPortrait.IsChecked  = ($DefaultPdfOrientation -eq "Portrait")
+    $chkPdfLandscape.Add_Click({
+        if ($chkPdfLandscape.IsChecked) { $chkPdfPortrait.IsChecked = $false }
+        elseif (-not $chkPdfPortrait.IsChecked) { $chkPdfLandscape.IsChecked = $true }
+    })
+    $chkPdfPortrait.Add_Click({
+        if ($chkPdfPortrait.IsChecked) { $chkPdfLandscape.IsChecked = $false }
+        elseif (-not $chkPdfLandscape.IsChecked) { $chkPdfPortrait.IsChecked = $true }
+    })
 
     # Sprachwechsel: GUI wird in der neuen Sprache neu aufgebaut
     $chkLangDe.Add_Click({
@@ -10962,6 +11078,7 @@ function Show-DocumentationGui {
             Sections   = $selectedSections
             Formats    = $formats
             Language   = $script:UILanguage
+            PdfOrientation = if ($chkPdfPortrait.IsChecked) { "Portrait" } else { "Landscape" }
         }
         $window.Close()
     })
@@ -11445,7 +11562,8 @@ try {
             $guiConfig = Show-DocumentationGui `
                 -DefaultServers ($ExchangeServers -join ", ") `
                 -DefaultCompany $CompanyName `
-                -DefaultOutputPath $OutputPath
+                -DefaultOutputPath $OutputPath `
+                -DefaultPdfOrientation $PdfOrientation
 
             if ($guiConfig -and $guiConfig.ContainsKey("SwitchLanguage")) {
                 # Sprache umschalten und GUI neu aufbauen
@@ -11470,6 +11588,7 @@ try {
         $OutputPath          = $guiConfig.OutputPath
         $selectedSectionKeys = $guiConfig.Sections
         $OutputFormats       = $guiConfig.Formats
+        if ($guiConfig.PdfOrientation) { $PdfOrientation = $guiConfig.PdfOrientation }
         if ($guiConfig.Language) { $script:UILanguage = $guiConfig.Language }
     }
 
@@ -11508,6 +11627,9 @@ try {
     Write-Log -Message (Get-LocText -Key 'TargetServers' -FormatArgs @(($ExchangeServers -join ', '))) -Level "INFO"
     Write-Log -Message (Get-LocText -Key 'OutputPathLog' -FormatArgs @($LogPath)) -Level "INFO"
     Write-Log -Message (Get-LocText -Key 'OutputFormatsLog' -FormatArgs @(($OutputFormats -join ', '))) -Level "INFO"
+    if ($OutputFormats -contains "PDF") {
+        Write-Log -Message (Get-LocText -Key 'PdfOrientationLog' -FormatArgs @($PdfOrientation)) -Level "INFO"
+    }
     Write-Log -Message (Get-LocText -Key 'SelectedSectionsLog' -FormatArgs @($selectedSectionKeys.Count)) -Level "INFO"
     Write-Log -Message (Get-LocText -Key 'ConnectionModeLog') -Level "INFO"
     Write-Log -Message "=============================================" -Level "INFO"
@@ -11653,7 +11775,7 @@ try {
 
     if ($needHtml) {
         Write-Log -Message (Get-LocText -Key 'GenHtml') -Level "INFO"
-        $finalHTML = Build-HTMLDocument
+        $finalHTML = Build-HTMLDocument -PdfOrientation $PdfOrientation
         $finalHTML | Out-File -FilePath $script:HTMLOutputFile -Encoding UTF8 -Force
         if ($OutputFormats -contains "HTML") {
             [void]$createdFiles.Add($script:HTMLOutputFile)
@@ -11662,7 +11784,7 @@ try {
 
     if ($OutputFormats -contains "PDF") {
         Write-Log -Message (Get-LocText -Key 'GenPdf') -Level "INFO"
-        if (Export-DocumentToPdf -HtmlPath $script:HTMLOutputFile -PdfPath $script:PDFOutputFile) {
+        if (Export-DocumentToPdf -HtmlPath $script:HTMLOutputFile -PdfPath $script:PDFOutputFile -Orientation $PdfOrientation) {
             [void]$createdFiles.Add($script:PDFOutputFile)
         }
         # Temporäres HTML entfernen, falls HTML nicht gewünscht war

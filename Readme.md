@@ -4,7 +4,7 @@
 > **EN:** Automated inventory and documentation of Microsoft Exchange On-Premises environments (Exchange 2013, 2016, 2019 & Subscription Edition)
 
 [![Status](https://img.shields.io/badge/Status-Release-brightgreen?style=flat-square)](./CHANGELOG.md)
-[![Version](https://img.shields.io/badge/Version-2.1-blue?style=flat-square)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-2.2-blue?style=flat-square)](./CHANGELOG.md)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-blue?style=flat-square)](https://www.microsoft.com/en-us/download/details.aspx?id=50395)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](./LICENSE)
 [![GitLab Issues](https://img.shields.io/gitlab/issues/open/RoccoAmmon/Exchange-Documentation?style=flat-square)](https://gitlab.com/RoccoAmmon/Exchange-Documentation/-/issues)
@@ -80,6 +80,12 @@ The tool supports **Exchange Server 2013, 2016, 2019** and **Exchange Server Sub
 
 ### 📦 Neue Funktionen & Fixes / New Features & Fixes
 
+**v2.2**
+- **📄 PDF im A4-Querformat** – Standardmäßig Querformat für breite Tabellen, Hochformat per `-PdfOrientation Portrait` oder GUI-Umschalter / A4 landscape by default for wide tables, portrait via `-PdfOrientation Portrait` or GUI toggle
+- **🧩 Saubere Tabellenumbrüche** – lange Tabellen brechen über Seiten um, Tabellenköpfe werden wiederholt, lange Wörter/URLs werden umbrochen / long tables break across pages, headers repeat, long words/URLs wrap
+- **📝 Word-Export angepasst** – Papierformat, Ausrichtung und Ränder werden explizit gesetzt, Tabellen auf Seitenbreite eingepasst / explicit page setup and tables fitted to page width
+- **`-PdfOrientation`** – neuer Parameter `Landscape` (Standard) oder `Portrait`
+
 **v2.1**
 - **🔄 Automatisches Self-Update** – Prüfung gegen GitLab Releases + In-Skript-Update mit SHA256/Größe/Syntax/Versions-Verifikation, Backup und Rollback / Automatic self-update against GitLab Releases with verification, backup and rollback
 - ** GUI-Update-Badge** – Klick = Update installieren, Rechtsklick = Release-Seite / Click = install update, right-click = release page
@@ -139,7 +145,8 @@ The tool supports **Exchange Server 2013, 2016, 2019** and **Exchange Server Sub
 
 ### 📄 Export & Output / Ausgabe
 - **HTML Export** with formatted table of contents
-- **PDF Export** (optional)
+- **PDF Export** (optional) – A4 landscape by default, portrait selectable (`-PdfOrientation Portrait`) / standardmäßig A4-Querformat, Hochformat wählbar
+- **PDF-optimierte Tabellen** – lange Tabellen brechen sauber über Seiten um, Kopfzeile wird wiederholt, breite Spalten/URLs werden umbrochen / long tables break across pages with repeated headers and wrapped cells
 - **Markdown Export** (optional)
 - Word-compatible HTML structure
 - Detailed logging
@@ -269,6 +276,7 @@ $sections = @(
 | `CompanyName` | string | "Meine Organisation" | Company name in report |
 | `OutputPath` | string | C:\ExchangeDoku | Output directory for documents |
 | `OutputFormats` | string[] | @('HTML') | Output formats: HTML, PDF, Markdown |
+| `PdfOrientation` | string | "Landscape" | PDF page orientation: `Landscape` (Querformat) or `Portrait` (Hochformat) |
 | `Sections` | string[] | (all) | Documentation sections to include |
 | `Language` | string | "DE" | Output language: `DE` (German) or `EN` (English) |
 | `ShowGui` | switch | - | Force GUI |
